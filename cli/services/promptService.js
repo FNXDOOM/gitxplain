@@ -11,7 +11,8 @@ const PROMPT_FILES = {
   summary: "summary.txt",
   issues: "issue.txt",
   fix: "junior.txt",
-  impact: "impact.txt"
+  impact: "impact.txt",
+  lines: "lines.txt"
 };
 
 function fillTemplate(template, values) {
