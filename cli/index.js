@@ -51,7 +51,13 @@ import {
   formatPreamble
 } from "./services/outputFormatter.js";
 import { executeCommitPlan, formatCommitPlan, parseCommitPlan, reconcileCommitPlan } from "./services/commitService.js";
-import { executeSplit, formatSplitPlan, parseSplitPlan, validateSplitExecutionTarget } from "./services/splitService.js";
+import {
+  executeSplit,
+  formatSplitPlan,
+  parseSplitPlan,
+  reconcileSplitPlan,
+  validateSplitExecutionTarget
+} from "./services/splitService.js";
 
 const MODE_FLAGS = new Map([
   ["--summary", "summary"],
@@ -720,7 +726,7 @@ export async function main(argv = process.argv) {
       onStart: null
     });
 
-    const plan = parseSplitPlan(explanation);
+    const plan = reconcileSplitPlan(parseSplitPlan(explanation), commitData.filesChanged);
 
     if (!plan.reason_to_split || plan.commits.length === 0) {
       console.log("This commit is already atomic. No split recommended.");
