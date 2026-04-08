@@ -234,3 +234,50 @@ test("executeSplit supports splitting a root commit when later commits must be r
   assert.equal(run(["rev-parse", "HEAD^{tree}"], cwd), originalHeadTree);
   assert.equal(run(["status", "--short"], cwd), "");
 });
+
+test("executeSplit supports splitting a middle non-HEAD commit with descendants on the current branch", () => {
+  const cwd = createRepoFixture();
+  writeFileSync(path.join(cwd, "base.txt"), "base\n", "utf8");
+  run(["add", "."], cwd);
+  run(["commit", "-m", "base"], cwd);
+
+  writeFileSync(path.join(cwd, "a.txt"), "one\n", "utf8");
+  writeFileSync(path.join(cwd, "b.txt"), "two\n", "utf8");
+  run(["add", "."], cwd);
+  run(["commit", "-m", "middle"], cwd);
+  const middleSha = run(["rev-parse", "HEAD"], cwd);
+
+  writeFileSync(path.join(cwd, "base.txt"), "base\ntail\n", "utf8");
+  run(["add", "base.txt"], cwd);
+  run(["commit", "-m", "follow-up"], cwd);
+  const originalHeadTree = run(["rev-parse", "HEAD^{tree}"], cwd);
+
+  executeSplit(
+    {
+      original_summary: "Middle commit files.",
+      reason_to_split: "Split middle files.",
+      commits: [
+        {
+          order: 1,
+          message: "feat: add a",
+          files: ["a.txt"],
+          description: "Adds a.txt."
+        },
+        {
+          order: 2,
+          message: "feat: add b",
+          files: ["b.txt"],
+          description: "Adds b.txt."
+        }
+      ]
+    },
+    middleSha,
+    cwd
+  );
+
+  const logSubjects = run(["log", "--reverse", "--pretty=format:%s"], cwd).split("\n");
+  assert.deepEqual(logSubjects, ["base", "feat: add a", "feat: add b", "follow-up"]);
+  assert.equal(run(["rev-parse", "HEAD^{tree}"], cwd), originalHeadTree);
+  assert.equal(run(["status", "--short"], cwd), "");
+  assert.equal(run(["rev-parse", "--abbrev-ref", "HEAD"], cwd), "main");
+});
