@@ -513,8 +513,8 @@ export async function main(argv = process.argv) {
 
     const plan = finalizeReleaseMergePlan(buildReleaseMergePlan(cwd));
 
-    if (plan.commits.length === 0) {
-      console.log("No unreleased commits detected. Nothing to merge.");
+    if (plan.windows.length === 0) {
+      console.log("No unreleased release commits detected. Nothing to merge.");
       return 0;
     }
 
@@ -522,7 +522,7 @@ export async function main(argv = process.argv) {
 
     if (parsed.execute && !parsed.dryRun) {
       const confirmed = await askQuestion(
-        `\nThis will apply ${plan.commits.length} commit(s) onto ${plan.releaseBranch} as one release commit. Continue? (yes/no) > `
+        `\nThis will create ${plan.windows.length} release commit(s) on ${plan.releaseBranch}. Continue? (yes/no) > `
       );
       if (confirmed.toLowerCase() !== "yes") {
         console.log("Aborted.");
@@ -530,9 +530,9 @@ export async function main(argv = process.argv) {
       }
 
       executeReleaseMerge(plan, cwd);
-      console.log(`\nRelease promotion complete. Applied ${plan.commits.length} commit(s) onto ${plan.releaseBranch} as one commit.`);
+      console.log(`\nRelease promotion complete. Created ${plan.windows.length} release commit(s) on ${plan.releaseBranch}.`);
     } else {
-      console.log(`\nThis is a preview. Run with --execute to apply the selected commit range on ${plan.releaseBranch}.`);
+      console.log(`\nThis is a preview. Run with --execute to create release commits on ${plan.releaseBranch}.`);
     }
 
     return 0;
