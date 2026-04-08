@@ -48,10 +48,36 @@ test("parseSplitPlan supports empty commits when no split is needed", () => {
   assert.equal(plan.commits.length, 0);
 });
 
+test("parseSplitPlan deduplicates files across split groups", () => {
+  const plan = parseSplitPlan(`{
+    "original_summary": "Adds validation and tests.",
+    "reason_to_split": "Separate implementation and tests.",
+    "commits": [
+      {
+        "order": 1,
+        "message": "feat: add validation helper",
+        "files": ["src/validation.js", "test/validation.test.js"],
+        "description": "Adds implementation."
+      },
+      {
+        "order": 2,
+        "message": "test: add validation coverage",
+        "files": ["test/validation.test.js"],
+        "description": "Adds tests."
+      }
+    ]
+  }`);
+
+  assert.deepEqual(plan.commits[0].files, ["src/validation.js", "test/validation.test.js"]);
+  assert.equal(plan.commits.length, 1);
+  assert.match(plan.warnings[0], /Duplicate file assignments were removed/);
+});
+
 test("formatSplitPlan renders the expected sections", () => {
   const output = formatSplitPlan({
     original_summary: "Added validation and tests.",
     reason_to_split: "The change mixes app logic and test coverage.",
+    warnings: ["Duplicate file assignments were removed from later split groups: test/validation.test.js."],
     commits: [
       {
         order: 1,
@@ -71,20 +97,36 @@ test("formatSplitPlan renders the expected sections", () => {
   assert.match(output, /Split Plan/);
   assert.match(output, /Original Summary:/);
   assert.match(output, /Reason To Split:/);
+  assert.match(output, /Warning:/);
   assert.match(output, /1\. feat: add validation helper/);
   assert.match(output, /Files: src\/validation\.js/);
   assert.match(output, /Why: Adds the helper implementation\./);
 });
 
-test("validateSplitExecutionTarget rejects non-HEAD commits", () => {
+test("validateSplitExecutionTarget allows reachable non-HEAD commits", () => {
+  const result = validateSplitExecutionTarget("abc123", "/tmp", {
+    resolveCommitSha: () => "abc123",
+    getCurrentHeadSha: () => "def456",
+    getCommitParents: () => ["parent123"],
+    isAncestorCommit: () => true
+  });
+
+  assert.equal(result.targetSha, "abc123");
+  assert.equal(result.currentHeadSha, "def456");
+  assert.equal(result.parentSha, "parent123");
+  assert.equal(result.isHeadTarget, false);
+});
+
+test("validateSplitExecutionTarget rejects commits outside HEAD history", () => {
   assert.throws(
     () =>
       validateSplitExecutionTarget("abc123", "/tmp", {
         resolveCommitSha: () => "abc123",
         getCurrentHeadSha: () => "def456",
-        getCommitParents: () => ["parent123"]
+        getCommitParents: () => ["parent123"],
+        isAncestorCommit: () => false
       }),
-    /supports only the current HEAD commit/
+    /not reachable from the current HEAD/
   );
 });
 
@@ -94,7 +136,8 @@ test("validateSplitExecutionTarget rejects merge commits", () => {
       validateSplitExecutionTarget("abc123", "/tmp", {
         resolveCommitSha: () => "abc123",
         getCurrentHeadSha: () => "abc123",
-        getCommitParents: () => ["parent1", "parent2"]
+        getCommitParents: () => ["parent1", "parent2"],
+        isAncestorCommit: () => true
       }),
     /supports non-merge commits/
   );
