@@ -16,6 +16,7 @@ Supported providers:
 - Explains what a commit does, why it exists, and how the fix works
 - Supports focused output modes like summary, issue, fix, impact, review, security, and line-by-line walkthroughs
 - Supports AI-assisted commit splitting plans, with optional execution for the latest commit
+- Supports AI-assisted commit planning for uncommitted working tree changes
 - Supports quick repository log output for recent history inspection
 - Supports single commits, commit ranges, and branch-vs-base comparisons
 - Truncates oversized diffs before sending them to the model and reports that truncation
@@ -62,6 +63,8 @@ cp .env.example .env
 
 ```bash
 gitxplain help
+gitxplain commit
+gitxplain --commit
 gitxplain log --log
 gitxplain <commit-id>
 gitxplain <commit-id> --summary
@@ -73,6 +76,7 @@ gitxplain <commit-id> --lines
 gitxplain <commit-id> --review
 gitxplain <commit-id> --security
 gitxplain <commit-id> --split
+gitxplain --commit --execute
 gitxplain <commit-id> --json
 gitxplain <commit-id> --markdown
 gitxplain <commit-id> --html
@@ -94,6 +98,7 @@ Examples:
 
 ```bash
 npm start -- HEAD~1 --summary
+npm start -- commit
 npm start -- log --log
 npm start -- a1b2c3d --full
 npm start -- HEAD~1 --lines
@@ -151,9 +156,10 @@ node /home/guru/Dev/gitxplain/cli/index.js HEAD~1 --full
 - `--review`: code review findings with actionable suggestions
 - `--security`: security-focused analysis of the change
 - `--split`: propose how to split a commit into multiple atomic commits
+- `--commit`: propose commits for current uncommitted changes
 - `--log`: print recent Git log entries for the current repository
 - `--execute`: apply a proposed split by rewriting history
-- `--dry-run`: preview the split plan without applying it
+- `--dry-run`: preview the split or commit plan without applying it
 - `--json`: return structured JSON instead of formatted text
 - `--markdown`: return Markdown output
 - `--html`: return HTML output
@@ -217,6 +223,29 @@ gitxplain HEAD --split --provider gemini
 `--split` asks the model for a plan first. By default this is a dry run and only prints the proposed commit breakdown. Adding `--execute` rewrites Git history by undoing the current `HEAD` commit and recreating it as multiple commits in the suggested order.
 
 Warning: `--split --execute` rewrites history. If the commit was already pushed, you may need to force-push after reviewing the new commit stack. For safety, execution only supports splitting the current `HEAD` commit and requires a clean working tree.
+
+## Commit Working Tree
+
+Preview how the current uncommitted changes should be committed:
+
+```bash
+gitxplain commit
+gitxplain --commit
+```
+
+Actually create the suggested commits:
+
+```bash
+gitxplain --commit --execute
+```
+
+Use a specific provider for the analysis:
+
+```bash
+gitxplain --commit --provider gemini
+```
+
+This mode analyzes the current working tree, proposes one or more logical commits with conventional commit messages, and can then create those commits automatically. By default it only previews the plan.
 
 ## Config File
 
