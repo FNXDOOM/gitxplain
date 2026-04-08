@@ -349,6 +349,10 @@ export function gitCherryPick(ref, cwd) {
   return runGitCommand(["cherry-pick", ref], cwd);
 }
 
+export function gitCherryPickRecordSource(ref, cwd) {
+  return runGitCommand(["cherry-pick", "-x", ref], cwd);
+}
+
 export function gitMerge(ref, cwd, message = null) {
   const args = message == null ? ["merge", "--no-ff", ref] : ["merge", "--no-ff", ref, "-m", message];
   return runGitCommand(args, cwd);
