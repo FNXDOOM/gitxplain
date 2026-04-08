@@ -10,7 +10,8 @@ const ANALYSIS_FLAGS = new Map([
   ["--issues", "issues"],
   ["--fix", "fix"],
   ["--impact", "impact"],
-  ["--full", "full"]
+  ["--full", "full"],
+  ["--lines", "lines"]
 ]);
 
 function printHelp() {
@@ -27,6 +28,7 @@ Options:
   --fix        Explain the fix in simple terms
   --impact     Explain before-vs-after behavior changes
   --full       Generate a full structured analysis
+  --lines      Explain the changed code line by line
   --provider   LLM provider: openai, groq, openrouter, gemini, ollama, chutes
   --model      Override the model name
   --json       Print JSON output
@@ -35,6 +37,7 @@ Options:
 Examples:
   gitxplain HEAD~1 --full
   gitxplain a1b2c3d --summary
+  gitxplain HEAD~1 --lines
   gitxplain HEAD~1 --provider groq --model llama-3.3-70b-versatile
   gitxplain HEAD~1 --provider chutes --model deepseek-ai/DeepSeek-V3-0324
 
@@ -132,6 +135,7 @@ async function chooseModeInteractively() {
       "3. Fix Explanation",
       "4. Impact",
       "5. Full Analysis",
+      "6. Line-by-Line Code Walkthrough",
       "> "
     ].join("\n")
   );
@@ -141,7 +145,8 @@ async function chooseModeInteractively() {
     "2": "issues",
     "3": "fix",
     "4": "impact",
-    "5": "full"
+    "5": "full",
+    "6": "lines"
   };
 
   return selections[answer] ?? "full";

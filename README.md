@@ -54,6 +54,7 @@ gitxplain <commit-id> --issues
 gitxplain <commit-id> --fix
 gitxplain <commit-id> --impact
 gitxplain <commit-id> --full
+gitxplain <commit-id> --lines
 gitxplain <commit-id> --json
 gitxplain <commit-id> --provider openrouter --model anthropic/claude-3.7-sonnet
 gitxplain <commit-id> --provider chutes --model deepseek-ai/DeepSeek-V3-0324
@@ -64,6 +65,7 @@ Examples:
 ```bash
 npm start -- HEAD~1 --summary
 npm start -- a1b2c3d --full
+npm start -- HEAD~1 --lines
 npm start -- HEAD~1 --provider groq --model llama-3.3-70b-versatile
 npm start -- HEAD~1 --provider gemini --model gemini-2.5-flash
 npm start -- HEAD~1 --provider chutes --model deepseek-ai/DeepSeek-V3-0324
@@ -84,6 +86,7 @@ Then from any Git repository:
 gitxplain help
 gitxplain HEAD~1 --full
 gitxplain a1b2c3d --summary
+gitxplain HEAD~1 --lines
 ```
 
 The `gitxplain help` command also prints quick API-key setup examples for:
@@ -108,6 +111,7 @@ node /home/guru/Dev/gitxplain/cli/index.js HEAD~1 --full
 - `--fix`: junior-friendly explanation of the fix
 - `--impact`: before-vs-after explanation focused on behavior changes
 - `--full`: full structured analysis
+- `--lines`: file-by-file, line-by-line walkthrough of the changed code
 - `--json`: return structured JSON instead of formatted text
 
 If no analysis flag is supplied, the CLI asks what kind of explanation you want.
