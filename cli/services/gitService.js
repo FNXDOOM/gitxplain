@@ -452,6 +452,28 @@ export function gitStashDrop(stashRef, cwd) {
   return runGitCommand(["stash", "drop", stashRef], cwd);
 }
 
+export function resolveStashRef(index = null) {
+  if (index == null) {
+    return "stash@{0}";
+  }
+
+  if (typeof index === "string" && /^stash@\{\d+\}$/.test(index.trim())) {
+    return index.trim();
+  }
+
+  const parsed = Number.parseInt(String(index), 10);
+  if (Number.isNaN(parsed) || parsed < 0) {
+    throw new Error(`Invalid stash index: ${index}`);
+  }
+
+  return `stash@{${parsed}}`;
+}
+
+export function gitStashPop(index, cwd) {
+  const stashRef = resolveStashRef(index);
+  return runGitCommand(["stash", "pop", "--index", stashRef], cwd);
+}
+
 export function getLatestStashRef(cwd) {
   const output = runGitCommand(["stash", "list", "--format=%gd"], cwd);
   return output.split("\n").map((line) => line.trim()).find(Boolean) ?? null;
