@@ -1,11 +1,32 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import {
+  executeSplit,
   formatSplitPlan,
   parseSplitPlan,
   reconcileSplitPlan,
   validateSplitExecutionTarget
 } from "../cli/services/splitService.js";
+
+function run(commandArgs, cwd) {
+  return execFileSync("git", commandArgs, {
+    cwd,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"]
+  }).trim();
+}
+
+function createRepoFixture() {
+  const cwd = mkdtempSync(path.join(tmpdir(), "gitxplain-split-root-"));
+  run(["init", "-b", "main"], cwd);
+  run(["config", "user.name", "Gitxplain Test"], cwd);
+  run(["config", "user.email", "gitxplain@example.com"], cwd);
+  return cwd;
+}
 
 test("parseSplitPlan parses valid JSON", () => {
   const plan = parseSplitPlan(`{
@@ -168,6 +189,48 @@ test("validateSplitExecutionTarget rejects merge commits", () => {
         getCommitParents: () => ["parent1", "parent2"],
         isAncestorCommit: () => true
       }),
-    /supports non-merge commits/
+    /Merge commits have multiple parents/
   );
+});
+
+test("executeSplit supports splitting a root commit when later commits must be replayed", () => {
+  const cwd = createRepoFixture();
+  writeFileSync(path.join(cwd, "a.txt"), "one\n", "utf8");
+  writeFileSync(path.join(cwd, "b.txt"), "two\n", "utf8");
+  run(["add", "."], cwd);
+  run(["commit", "-m", "root"], cwd);
+  const rootSha = run(["rev-parse", "HEAD"], cwd);
+
+  writeFileSync(path.join(cwd, "a.txt"), "one\ntail\n", "utf8");
+  run(["add", "a.txt"], cwd);
+  run(["commit", "-m", "follow-up"], cwd);
+  const originalHeadTree = run(["rev-parse", "HEAD^{tree}"], cwd);
+
+  executeSplit(
+    {
+      original_summary: "Initial project files.",
+      reason_to_split: "Split root files.",
+      commits: [
+        {
+          order: 1,
+          message: "feat: add a",
+          files: ["a.txt"],
+          description: "Adds a.txt."
+        },
+        {
+          order: 2,
+          message: "feat: add b",
+          files: ["b.txt"],
+          description: "Adds b.txt."
+        }
+      ]
+    },
+    rootSha,
+    cwd
+  );
+
+  const logSubjects = run(["log", "--reverse", "--pretty=format:%s"], cwd).split("\n");
+  assert.deepEqual(logSubjects, ["feat: add a", "feat: add b", "follow-up"]);
+  assert.equal(run(["rev-parse", "HEAD^{tree}"], cwd), originalHeadTree);
+  assert.equal(run(["status", "--short"], cwd), "");
 });

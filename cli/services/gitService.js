@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { rmSync } from "node:fs";
+import os from "node:os";
+import { mkdtempSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 
@@ -39,6 +40,24 @@ export function runGitCommandWithInput(args, cwd, input) {
     return execFileSync("git", args, {
       cwd,
       input,
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "pipe"]
+    }).trim();
+  } catch (error) {
+    const stderr = error.stderr?.toString().trim();
+    throw new Error(stderr || `Git command failed: git ${args.join(" ")}`);
+  }
+}
+
+export function runGitCommandWithInputAndEnv(args, cwd, input, env) {
+  try {
+    return execFileSync("git", args, {
+      cwd,
+      input,
+      env: {
+        ...process.env,
+        ...env
+      },
       encoding: "utf8",
       stdio: ["pipe", "pipe", "pipe"]
     }).trim();
@@ -354,8 +373,35 @@ export function getCommitParents(ref, cwd) {
     .filter(Boolean);
 }
 
+export function getCommitMetadata(ref, cwd) {
+  const output = runGitCommand(
+    ["show", "-s", "--format=%an%x1f%ae%x1f%aI%x1f%cn%x1f%ce%x1f%cI%x1f%B", ref],
+    cwd
+  );
+  const [authorName = "", authorEmail = "", authorDate = "", committerName = "", committerEmail = "", committerDate = "", ...messageParts] =
+    output.split("\u001f");
+
+  return {
+    authorName,
+    authorEmail,
+    authorDate,
+    committerName,
+    committerEmail,
+    committerDate,
+    message: messageParts.join("\u001f")
+  };
+}
+
 export function listCommitsAfter(baseRef, headRef, cwd) {
   const output = runGitCommand(["rev-list", "--reverse", `${baseRef}..${headRef}`], cwd);
+  return output
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+export function listCommitsAfterTopo(baseRef, headRef, cwd) {
+  const output = runGitCommand(["rev-list", "--reverse", "--topo-order", `${baseRef}..${headRef}`], cwd);
   return output
     .split("\n")
     .map((line) => line.trim())
@@ -479,6 +525,47 @@ export function gitRemoveCachedAll(cwd) {
 export function createEmptyRootCommit(message, cwd) {
   const emptyTree = runGitCommandWithInput(["mktree"], cwd, "");
   return runGitCommand(["commit-tree", emptyTree, "-m", message], cwd);
+}
+
+export function createCommitFromTree(treeSha, parentShas, metadata, cwd) {
+  const args = ["commit-tree", treeSha];
+
+  for (const parentSha of parentShas) {
+    args.push("-p", parentSha);
+  }
+
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "gitxplain-commit-tree-"));
+  const messagePath = path.join(tempDir, "message.txt");
+
+  try {
+    writeFileSync(messagePath, metadata.message.endsWith("\n") ? metadata.message : `${metadata.message}\n`, "utf8");
+    args.push("-F", messagePath);
+
+    return execFileSync("git", args, {
+      cwd,
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: metadata.authorName,
+        GIT_AUTHOR_EMAIL: metadata.authorEmail,
+        GIT_AUTHOR_DATE: metadata.authorDate,
+        GIT_COMMITTER_NAME: metadata.committerName,
+        GIT_COMMITTER_EMAIL: metadata.committerEmail,
+        GIT_COMMITTER_DATE: metadata.committerDate
+      },
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"]
+    }).trim();
+  } catch (error) {
+    const stderr = error.stderr?.toString().trim();
+    throw new Error(stderr || `Git command failed: git ${args.join(" ")}`);
+  } finally {
+    try {
+      unlinkSync(messagePath);
+    } catch {}
+    try {
+      rmSync(tempDir, { recursive: true, force: true });
+    } catch {}
+  }
 }
 
 export function writeCurrentIndexTree(cwd) {

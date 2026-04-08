@@ -1,6 +1,8 @@
 import process from "node:process";
 import {
+  createCommitFromTree,
   deletePaths,
+  getCommitMetadata,
   getCommitParents,
   getCurrentBranchName,
   getCurrentHeadSha,
@@ -24,6 +26,7 @@ import {
   isAncestorCommit,
   isWorkingTreeClean,
   listCommitsAfter,
+  listCommitsAfterTopo,
   listFilesInRef,
   resolveTreeSha,
   runGitCommandUnchecked,
@@ -300,7 +303,7 @@ export function validateSplitExecutionTarget(
 
   const parents = helpers.getCommitParents(targetSha, cwd);
   if (parents.length > 1) {
-    throw new Error("Automatic split execution only supports non-merge commits.");
+    throw new Error("Only non-merge commits can be split. Merge commits have multiple parents.");
   }
 
   return {
@@ -313,10 +316,6 @@ export function validateSplitExecutionTarget(
 
 function createTempRootSplitBranchName() {
   return `gitxplain-split-root-${Date.now()}`;
-}
-
-function createTempReplayBranchName() {
-  return `gitxplain-split-replay-${Date.now()}`;
 }
 
 function restoreOriginalPointer(originalBranch, originalHeadSha, cwd) {
@@ -341,51 +340,31 @@ function finalizeRootSplitBranch(tempBranch, originalBranch, rewrittenHeadSha, c
   gitDeleteBranch(tempBranch, cwd);
 }
 
-function replayDescendantsOntoSplitTip(
-  replayBranch,
-  splitTipSha,
-  targetSha,
-  originalHeadSha,
-  expectedTreeSha,
-  cwd
-) {
-  const strategies = [null, "theirs", "ours"];
-  let lastError = null;
+function replayDescendantsFromOriginalTrees(targetSha, originalHeadSha, splitTipSha, cwd) {
+  const descendantShas = listCommitsAfterTopo(targetSha, originalHeadSha, cwd);
+  const rewritten = new Map([[targetSha, splitTipSha]]);
 
-  for (const strategy of strategies) {
-    gitCheckout(replayBranch, cwd);
-    gitResetHard(originalHeadSha, cwd);
-
-    try {
-      gitRebaseRebaseMergesOnto(splitTipSha, targetSha, cwd, strategy);
-      const replayedTreeSha = resolveTreeSha("HEAD", cwd);
-
-      if (replayedTreeSha === expectedTreeSha) {
-        return getCurrentHeadSha(cwd);
-      }
-
-      lastError = new Error(
-        `Replay strategy ${strategy ?? "default"} completed, but the rewritten HEAD tree did not match the original HEAD tree.`
-      );
-    } catch (error) {
-      lastError = error;
-    }
-
-    gitRebaseAbort(cwd);
+  for (const originalSha of descendantShas) {
+    const originalParents = getCommitParents(originalSha, cwd);
+    const rewrittenParents = originalParents.map((parentSha) => rewritten.get(parentSha) ?? parentSha);
+    const treeSha = resolveTreeSha(originalSha, cwd);
+    const metadata = getCommitMetadata(originalSha, cwd);
+    const rewrittenSha = createCommitFromTree(treeSha, rewrittenParents, metadata, cwd);
+    rewritten.set(originalSha, rewrittenSha);
   }
 
-  throw lastError ?? new Error("Failed to replay descendant commits after split.");
+  return rewritten.get(originalHeadSha) ?? splitTipSha;
 }
 
 export function executeSplit(plan, commitId, cwd) {
   const { targetSha, currentHeadSha, parentSha } = validateSplitExecutionTarget(commitId, cwd);
   const originalHeadSha = currentHeadSha;
+  const originalTargetTreeSha = resolveTreeSha(targetSha, cwd);
   const originalHeadTreeSha = resolveTreeSha("HEAD", cwd);
   const orderedCommits = sortPlanCommits(plan);
   const originalBranch = getCurrentBranchName(cwd);
   let rootSplitTempBranch = null;
   let rootSplitOriginalBranch = null;
-  let replayTempBranch = null;
 
   try {
     if (!isWorkingTreeClean(cwd)) {
@@ -398,8 +377,6 @@ export function executeSplit(plan, commitId, cwd) {
     }
 
     const commitsToReplay = listCommitsAfter(targetSha, originalHeadSha, cwd);
-    replayTempBranch = createTempReplayBranchName();
-    gitCreateBranch(replayTempBranch, originalHeadSha, cwd);
 
     if (parentSha == null) {
       const tempBranch = createTempRootSplitBranchName();
@@ -443,25 +420,24 @@ export function executeSplit(plan, commitId, cwd) {
     }
 
     const splitTipSha = getCurrentHeadSha(cwd);
+    const splitTipTreeSha = resolveTreeSha(splitTipSha, cwd);
 
+    if (splitTipTreeSha !== originalTargetTreeSha) {
+      throw new Error("Split verification failed: the split commit stack does not reproduce the original target commit tree.");
+    }
+
+    let rewrittenHeadSha = splitTipSha;
     if (commitsToReplay.length > 0) {
-      const rewrittenReplayHeadSha = replayDescendantsOntoSplitTip(
-        replayTempBranch,
-        splitTipSha,
-        targetSha,
-        originalHeadSha,
-        originalHeadTreeSha,
-        cwd
-      );
+      rewrittenHeadSha = replayDescendantsFromOriginalTrees(targetSha, originalHeadSha, splitTipSha, cwd);
 
       if (rootSplitTempBranch) {
-        finalizeRootSplitBranch(rootSplitTempBranch, rootSplitOriginalBranch, rewrittenReplayHeadSha, cwd);
+        finalizeRootSplitBranch(rootSplitTempBranch, rootSplitOriginalBranch, rewrittenHeadSha, cwd);
       } else {
         if (originalBranch !== "HEAD") {
-          gitForceBranch(originalBranch, rewrittenReplayHeadSha, cwd);
+          gitForceBranch(originalBranch, rewrittenHeadSha, cwd);
           gitCheckout(originalBranch, cwd);
         } else {
-          gitCheckoutDetached(rewrittenReplayHeadSha, cwd);
+          gitCheckoutDetached(rewrittenHeadSha, cwd);
         }
       }
     } else if (rootSplitTempBranch) {
@@ -478,14 +454,11 @@ export function executeSplit(plan, commitId, cwd) {
     }
   } catch (error) {
     gitCherryPickAbort(cwd);
-    gitRebaseAbort(cwd);
 
     try {
       if (rootSplitTempBranch) {
         restoreOriginalPointer(rootSplitOriginalBranch ?? "HEAD", originalHeadSha, cwd);
         gitDeleteBranch(rootSplitTempBranch, cwd);
-      } else if (replayTempBranch) {
-        restoreOriginalPointer(originalBranch, originalHeadSha, cwd);
       } else {
         runGitCommandUnchecked(["reset", "--hard", originalHeadSha], cwd);
       }
@@ -496,16 +469,5 @@ export function executeSplit(plan, commitId, cwd) {
     console.error(error.message);
     console.error(buildRecoveryMessage(originalHeadSha));
     throw new Error("Split execution aborted.");
-  } finally {
-    if (replayTempBranch) {
-      try {
-        const currentBranch = getCurrentBranchName(cwd);
-        if (currentBranch !== replayTempBranch) {
-          gitDeleteBranch(replayTempBranch, cwd);
-        }
-      } catch {
-        // Best-effort cleanup for the temporary replay branch.
-      }
-    }
   }
 }
