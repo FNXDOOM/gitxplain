@@ -9,8 +9,13 @@ import { copyToClipboard } from "./services/clipboardService.js";
 import { loadConfig } from "./services/configService.js";
 import {
   buildBranchRange,
+  deletePaths,
   fetchCommitData,
+  fetchWorkingTreeData,
+  gitAddFiles,
+  gitRestoreStaged,
   getRepositoryLog,
+  getRepositoryStatus,
   getDefaultBaseRef,
   isGitRepository
 } from "./services/gitService.js";
@@ -23,6 +28,7 @@ import {
   formatOutput,
   formatPreamble
 } from "./services/outputFormatter.js";
+import { executeCommitPlan, formatCommitPlan, parseCommitPlan, reconcileCommitPlan } from "./services/commitService.js";
 import { executeSplit, formatSplitPlan, parseSplitPlan } from "./services/splitService.js";
 
 const MODE_FLAGS = new Map([
@@ -35,7 +41,9 @@ const MODE_FLAGS = new Map([
   ["--review", "review"],
   ["--security", "security"],
   ["--split", "split"],
-  ["--log", "log"]
+  ["--commit", "commit"],
+  ["--log", "log"],
+  ["--status", "status"]
 ]);
 
 const FORMAT_FLAGS = new Map([
@@ -45,41 +53,62 @@ const FORMAT_FLAGS = new Map([
 ]);
 
 function printHelp() {
-  console.log(`gitxplain - AI-powered Git and branch explainer
+  console.log(`gitxplain - AI-powered Git change analysis, review, and commit workflow CLI
 
 Usage:
   gitxplain help
   gitxplain --help
+  gitxplain commit
+  gitxplain --commit
   gitxplain log
   gitxplain --log
+  gitxplain status
+  gitxplain --status
+  gitxplain add <path> [more-paths...]
+  gitxplain remove <path> [more-paths...]
+  gitxplain del <path> [more-paths...]
   gitxplain install-hook [hook-name]
   gitxplain <commit-id> [options]
   gitxplain <start>..<end> [options]
   gitxplain --branch [base-ref] [options]
   gitxplain --pr [base-ref] [options]
 
+What It Does:
+  Analyze commits, ranges, branches, and working tree changes
+  Generate summaries, reviews, security checks, and line-by-line walkthroughs
+  Plan commits for uncommitted work and split oversized commits into atomic steps
+  Inspect recent repository history and working tree status without calling the LLM
+  Run quick local actions to stage, unstage, or delete files
+
 Modes:
-  --summary    Generate a one-line summary
-  --issues     Focus on bug or issue analysis
-  --fix        Explain the fix in simple terms
+  --summary    Generate a one-line summary of a change
+  --issues     Focus on the bug, issue, or failure being addressed
+  --fix        Explain the fix in simple, junior-friendly terms
   --impact     Explain before-vs-after behavior changes
   --full       Generate a full structured analysis
-  --lines      Explain the changed code line by line
-  --review     Generate a code review with risks and suggestions
-  --security   Focus on security risks introduced by the change
-  --split      Propose splitting a commit into multiple atomic commits
+  --lines      Walk through the changed code file by file
+  --review     Generate review findings, risks, and suggestions
+  --security   Focus on security-relevant changes and concerns
+  --split      Propose splitting a commit into smaller atomic commits
+  --commit     Propose commits for current uncommitted changes
   --log        Print recent Git log entries for the current repository
-  --execute    Execute the proposed split (rewrites git history)
-  --dry-run    Show the split plan without executing (default for --split)
+  --status     Print Git working tree status for the current repository
+  --execute    Execute a proposed split or commit plan
+  --dry-run    Preview the plan without executing it (default for --split and --commit)
+
+Quick Actions:
+  add         Stage one or more files with git add
+  remove      Unstage one or more files with git restore --staged
+  del         Delete one or more files from the working tree
 
 Output:
-  --json       Print JSON output
+  --json       Print structured JSON output
   --markdown   Print Markdown output
   --html       Print HTML output
-  --quiet      Print only the explanation body
+  --quiet      Print only the main body without extra framing
   --verbose    Print provider, model, cache, latency, and usage details
   --clipboard  Copy the final output to the system clipboard
-  --stream     Stream the explanation as it is generated when supported
+  --stream     Stream model output as it is generated when supported
 
 Providers:
   --provider   LLM provider: openai, groq, openrouter, gemini, ollama, chutes
@@ -89,16 +118,24 @@ Diff Budget:
   --max-diff-lines <n>   Limit diff lines sent to the model
 
 Comparison:
-  --branch [base-ref]    Analyze current branch against base branch
-  --pr [base-ref]        Alias for --branch, useful for PR-style summaries
+  --branch [base-ref]    Analyze the current branch against a base branch
+  --pr [base-ref]        Alias for --branch, useful for PR-style comparisons
 
 Examples:
   gitxplain HEAD~1 --full
+  gitxplain HEAD~1 --review
   gitxplain HEAD~5..HEAD --markdown
   gitxplain --branch main --review
   gitxplain --pr origin/main --security --stream
+  gitxplain commit
+  gitxplain --commit --execute
   gitxplain log
   gitxplain --log
+  gitxplain status
+  gitxplain --status
+  gitxplain add README.md
+  gitxplain remove README.md
+  gitxplain del scratch.txt
   gitxplain HEAD~1 --split
   gitxplain HEAD --split --execute
   gitxplain HEAD~1 --provider chutes --model deepseek-ai/DeepSeek-V3-0324
@@ -138,6 +175,7 @@ Hook Installation:
 
 Notes:
   Run gitxplain inside a Git repository.
+  If no mode is supplied, gitxplain will prompt you to choose one interactively.
   Use --provider or --model to override your config or environment for one command.
 `);
 }
@@ -201,14 +239,35 @@ export function parseArgs(argv) {
   const explicitFormat = [...FORMAT_FLAGS.entries()].find(([flag]) => flags.has(flag))?.[1] ?? null;
   const isInstallHook = subcommand === "install-hook";
   const isLogCommand = subcommand === "log";
+  const isStatusCommand = subcommand === "status";
+  const isCommitCommand = subcommand === "commit";
+  const isAddCommand = subcommand === "add";
+  const isRemoveCommand = subcommand === "remove";
+  const isDeleteCommand = subcommand === "del";
 
   return {
     subcommand,
     help: flags.has("--help") || subcommand === "help",
     installHook: isInstallHook,
     logCommand: isLogCommand,
+    statusCommand: isStatusCommand,
+    commitCommand: isCommitCommand,
+    addCommand: isAddCommand,
+    removeCommand: isRemoveCommand,
+    deleteCommand: isDeleteCommand,
     hookName: isInstallHook ? positional[1] ?? "post-commit" : null,
-    commitRef: isInstallHook || isLogCommand || subcommand === "help" ? null : positional[0] ?? null,
+    actionPaths: isAddCommand || isRemoveCommand || isDeleteCommand ? positional.slice(1) : [],
+    commitRef:
+      isInstallHook ||
+      isLogCommand ||
+      isStatusCommand ||
+      isCommitCommand ||
+      isAddCommand ||
+      isRemoveCommand ||
+      isDeleteCommand ||
+      subcommand === "help"
+        ? null
+        : positional[0] ?? null,
     mode: explicitMode,
     format: explicitFormat,
     provider: getFlagValue(args, "--provider"),
@@ -224,7 +283,8 @@ export function parseArgs(argv) {
     quiet: flags.has("--quiet"),
     execute: flags.has("--execute"),
     dryRun: flags.has("--dry-run"),
-    log: flags.has("--log")
+    log: flags.has("--log"),
+    status: flags.has("--status")
   };
 }
 
@@ -254,6 +314,7 @@ async function chooseModeInteractively() {
       "8. Security Review",
       "9. Split Commit",
       "10. Repository Log",
+      "11. Commit Working Tree",
       "> "
     ].join("\n")
   );
@@ -268,7 +329,8 @@ async function chooseModeInteractively() {
     "7": "review",
     "8": "security",
     "9": "split",
-    "10": "log"
+    "10": "log",
+    "11": "commit"
   };
 
   return selections[answer] ?? "full";
@@ -350,7 +412,86 @@ export async function main(argv = process.argv) {
     return 0;
   }
 
+  if (parsed.statusCommand || parsed.status) {
+    console.log(getRepositoryStatus(cwd));
+    return 0;
+  }
+
+  if (parsed.addCommand || parsed.removeCommand || parsed.deleteCommand) {
+    if (parsed.actionPaths.length === 0) {
+      throw new Error(`No paths provided for "${parsed.subcommand}".`);
+    }
+
+    if (parsed.addCommand) {
+      gitAddFiles(parsed.actionPaths, cwd);
+      console.log(`Staged ${parsed.actionPaths.join(", ")}.`);
+      return 0;
+    }
+
+    if (parsed.removeCommand) {
+      gitRestoreStaged(parsed.actionPaths, cwd);
+      console.log(`Unstaged ${parsed.actionPaths.join(", ")}.`);
+      return 0;
+    }
+
+    deletePaths(parsed.actionPaths, cwd);
+    console.log(`Deleted ${parsed.actionPaths.join(", ")}.`);
+    return 0;
+  }
+
   const runtimeOptions = resolveRuntimeOptions(parsed, config);
+  const mode = parsed.mode ?? config.mode ?? (await chooseModeInteractively());
+
+  if (mode === "commit" || parsed.commitCommand) {
+    const commitData = fetchWorkingTreeData(cwd);
+
+    if (commitData.filesChanged.length === 0 || commitData.diff === "") {
+      console.log("Working tree is clean. Nothing to commit.");
+      return 0;
+    }
+
+    const { explanation, responseMeta, promptMeta } = await generateExplanation({
+      mode: "commit",
+      commitData,
+      providerOverride: runtimeOptions.provider,
+      modelOverride: runtimeOptions.model,
+      maxDiffLines: runtimeOptions.maxDiffLines,
+      stream: false,
+      onChunk: null,
+      onStart: null
+    });
+
+    const plan = reconcileCommitPlan(parseCommitPlan(explanation), cwd);
+
+    if (!plan.reason_to_commit || plan.commits.length === 0) {
+      console.log("No meaningful commit grouping recommended.");
+      return 0;
+    }
+
+    console.log(formatCommitPlan(plan));
+
+    if (parsed.execute && !parsed.dryRun) {
+      const confirmed = await askQuestion(
+        "\nThis will create new commits from your working tree changes. Continue? (yes/no) > "
+      );
+      if (confirmed.toLowerCase() !== "yes") {
+        console.log("Aborted.");
+        return 0;
+      }
+
+      executeCommitPlan(plan, cwd);
+      console.log(`\nCommit complete. Created ${plan.commits.length} commits.`);
+    } else {
+      console.log("\nThis is a preview. Run with --execute to apply the commit plan.");
+    }
+
+    if (runtimeOptions.verbose) {
+      process.stdout.write(formatFooter({ responseMeta, promptMeta, options: runtimeOptions }));
+    }
+
+    return 0;
+  }
+
   const targetRef = resolveTargetRef(parsed, cwd);
 
   if (!targetRef) {
@@ -358,7 +499,6 @@ export async function main(argv = process.argv) {
     return 1;
   }
 
-  const mode = parsed.mode ?? config.mode ?? (await chooseModeInteractively());
   const commitData = fetchCommitData(targetRef, cwd);
 
   if (mode === "split") {
