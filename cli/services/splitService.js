@@ -341,6 +341,20 @@ function finalizeRootSplitBranch(tempBranch, originalBranch, rewrittenHeadSha, c
   gitDeleteBranch(tempBranch, cwd);
 }
 
+function replayDescendantsOntoSplitTip(replayBranch, splitTipSha, targetSha, cwd) {
+  gitCheckout(replayBranch, cwd);
+
+  try {
+    gitRebaseRebaseMergesOnto(splitTipSha, targetSha, cwd);
+    return;
+  } catch {
+    gitRebaseAbort(cwd);
+  }
+
+  gitCheckout(replayBranch, cwd);
+  gitRebaseRebaseMergesOnto(splitTipSha, targetSha, cwd, "theirs");
+}
+
 export function executeSplit(plan, commitId, cwd) {
   const { targetSha, currentHeadSha, parentSha } = validateSplitExecutionTarget(commitId, cwd);
   const originalHeadSha = currentHeadSha;
@@ -409,8 +423,7 @@ export function executeSplit(plan, commitId, cwd) {
     const splitTipSha = getCurrentHeadSha(cwd);
 
     if (commitsToReplay.length > 0) {
-      gitCheckout(replayTempBranch, cwd);
-      gitRebaseRebaseMergesOnto(splitTipSha, targetSha, cwd);
+      replayDescendantsOntoSplitTip(replayTempBranch, splitTipSha, targetSha, cwd);
       const rewrittenReplayHeadSha = getCurrentHeadSha(cwd);
 
       if (rootSplitTempBranch) {

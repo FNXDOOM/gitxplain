@@ -453,8 +453,15 @@ export function gitForceBranch(branchName, ref, cwd) {
   return runGitCommand(["branch", "-f", branchName, ref], cwd);
 }
 
-export function gitRebaseRebaseMergesOnto(newBase, upstream, cwd) {
-  return runGitCommand(["rebase", "--rebase-merges", "--onto", newBase, upstream], cwd);
+export function gitRebaseRebaseMergesOnto(newBase, upstream, cwd, strategyOption = null) {
+  const args = ["rebase", "--rebase-merges"];
+
+  if (strategyOption) {
+    args.push("-X", strategyOption);
+  }
+
+  args.push("--onto", newBase, upstream);
+  return runGitCommand(args, cwd);
 }
 
 export function gitRebaseAbort(cwd) {
