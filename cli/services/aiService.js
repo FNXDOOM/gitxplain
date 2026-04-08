@@ -1,7 +1,14 @@
 import process from "node:process";
 import { buildPrompt } from "./promptService.js";
 
-const SUPPORTED_PROVIDERS = new Set(["openai", "groq", "openrouter", "gemini", "ollama"]);
+const SUPPORTED_PROVIDERS = new Set([
+  "openai",
+  "groq",
+  "openrouter",
+  "gemini",
+  "ollama",
+  "chutes"
+]);
 const SYSTEM_PROMPT = "You explain Git commits clearly and accurately for developers.";
 
 function getProviderConfig(providerOverride, modelOverride) {
@@ -47,6 +54,19 @@ function getProviderConfig(providerOverride, modelOverride) {
       baseUrl:
         process.env.GEMINI_BASE_URL ?? "https://generativelanguage.googleapis.com/v1beta",
       model: modelOverride ?? process.env.GEMINI_MODEL ?? process.env.LLM_MODEL ?? "gemini-2.5-flash"
+    };
+  }
+
+  if (provider === "chutes") {
+    return {
+      provider,
+      apiKey: process.env.CHUTES_API_KEY,
+      baseUrl: process.env.CHUTES_BASE_URL ?? "https://llm.chutes.ai/v1",
+      model:
+        modelOverride ??
+        process.env.CHUTES_MODEL ??
+        process.env.LLM_MODEL ??
+        "deepseek-ai/DeepSeek-V3-0324"
     };
   }
 

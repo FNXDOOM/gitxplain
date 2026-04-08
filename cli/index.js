@@ -17,6 +17,8 @@ function printHelp() {
   console.log(`gitxplain - AI-powered Git commit explainer
 
 Usage:
+  gitxplain help
+  gitxplain --help
   gitxplain <commit-id> [options]
 
 Options:
@@ -25,10 +27,45 @@ Options:
   --fix        Explain the fix in simple terms
   --impact     Explain before-vs-after behavior changes
   --full       Generate a full structured analysis
-  --provider   LLM provider: openai, groq, openrouter, gemini, ollama
+  --provider   LLM provider: openai, groq, openrouter, gemini, ollama, chutes
   --model      Override the model name
   --json       Print JSON output
   --help       Show this help message
+
+Examples:
+  gitxplain HEAD~1 --full
+  gitxplain a1b2c3d --summary
+  gitxplain HEAD~1 --provider groq --model llama-3.3-70b-versatile
+  gitxplain HEAD~1 --provider chutes --model deepseek-ai/DeepSeek-V3-0324
+
+Provider Setup:
+  OpenAI:
+    export LLM_PROVIDER=openai
+    export OPENAI_API_KEY=your_key
+
+  Groq:
+    export LLM_PROVIDER=groq
+    export GROQ_API_KEY=your_key
+
+  OpenRouter:
+    export LLM_PROVIDER=openrouter
+    export OPENROUTER_API_KEY=your_key
+
+  Gemini:
+    export LLM_PROVIDER=gemini
+    export GEMINI_API_KEY=your_key
+
+  Ollama:
+    export LLM_PROVIDER=ollama
+    export OLLAMA_MODEL=llama3.2
+
+  Chutes:
+    export LLM_PROVIDER=chutes
+    export CHUTES_API_KEY=your_key
+
+Notes:
+  Run gitxplain inside a Git repository.
+  Use --provider or --model to override your environment for one command.
 `);
 }
 
@@ -44,6 +81,7 @@ function getFlagValue(args, flagName) {
 
 function parseArgs(argv) {
   const args = argv.slice(2);
+  const subcommand = args[0];
   const flags = new Set(args.filter((arg) => arg.startsWith("--")));
   const valueFlags = new Set(["--provider", "--model"]);
   const positional = [];
@@ -64,9 +102,9 @@ function parseArgs(argv) {
   const mode = [...ANALYSIS_FLAGS.entries()].find(([flag]) => flags.has(flag))?.[1] ?? null;
 
   return {
-    commitId,
+    commitId: subcommand === "help" ? null : commitId,
     json: flags.has("--json"),
-    help: flags.has("--help"),
+    help: flags.has("--help") || subcommand === "help",
     mode,
     provider: getFlagValue(args, "--provider"),
     model: getFlagValue(args, "--model")
