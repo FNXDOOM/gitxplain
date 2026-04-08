@@ -5,6 +5,15 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { realpathSync } from "node:fs";
 import { generateExplanation } from "./services/aiService.js";
+import { startChatSession } from "./services/chatService.js";
+import { loadEnvFile } from "./services/envLoader.js";
+import {
+  saveGitConnection,
+  isGitConnected,
+  loadGitConnection,
+  getGitUserInfo,
+  verifyGitToken
+} from "./services/gitConnectionService.js";
 import { copyToClipboard } from "./services/clipboardService.js";
 import { loadConfig } from "./services/configService.js";
 import {
@@ -89,6 +98,8 @@ Usage:
   gitxplain pop [stash-index]
   gitxplain push [remote] [branch]
   gitxplain install-hook [hook-name]
+  gitxplain --connect-git [token]
+  gitxplain --boot [options]
   gitxplain <commit-id> [options]
   gitxplain <start>..<end> [options]
   gitxplain --branch [base-ref] [options]
@@ -136,6 +147,8 @@ Output:
   --verbose    Print provider, model, cache, latency, and usage details
   --clipboard  Copy the final output to the system clipboard
   --stream     Stream model output as it is generated when supported
+  --boot       Launch an interactive chat session for dynamic querying, PR creation, and cloning.
+  --connect-git Save your GitHub Personal Access Token to act autonomously inside Chat.
 
 Providers:
   --provider   LLM provider: openai, groq, openrouter, gemini, ollama, chutes
@@ -273,6 +286,8 @@ export function parseArgs(argv) {
   const explicitMode = [...MODE_FLAGS.entries()].find(([flag]) => flags.has(flag))?.[1] ?? null;
   const explicitFormat = [...FORMAT_FLAGS.entries()].find(([flag]) => flags.has(flag))?.[1] ?? null;
   const isInstallHook = subcommand === "install-hook";
+  const isConnectGit = flags.has("--connect-git");
+  const isBoot = flags.has("--boot");
   const isLogCommand = subcommand === "log";
   const isStatusCommand = subcommand === "status";
   const isCommitCommand = subcommand === "commit";
@@ -288,6 +303,8 @@ export function parseArgs(argv) {
     subcommand,
     help: flags.has("--help") || subcommand === "help",
     installHook: isInstallHook,
+    connectGit: isConnectGit,
+    boot: isBoot,
     logCommand: isLogCommand,
     statusCommand: isStatusCommand,
     commitCommand: isCommitCommand,
@@ -300,11 +317,14 @@ export function parseArgs(argv) {
     pushCommand: isPushCommand,
     hookName: isInstallHook ? positional[1] ?? "post-commit" : null,
     actionPaths: isAddCommand || isRemoveCommand || isDeleteCommand ? positional.slice(1) : [],
+    connectToken: isConnectGit ? positional[0] : null,
     stashIndex: isPopCommand ? positional[1] ?? null : null,
     pushRemote: isPushCommand ? positional[1] ?? null : null,
     pushBranch: isPushCommand ? positional[2] ?? null : null,
     commitRef:
       isInstallHook ||
+      isConnectGit ||
+      isBoot ||
       isLogCommand ||
       isStatusCommand ||
       isCommitCommand ||
@@ -447,6 +467,8 @@ export async function main(argv = process.argv) {
   const config = loadConfig(cwd);
   const parsed = parseArgs(argv);
 
+  loadEnvFile(cwd); // Ensure environment is loaded first
+
   if (parsed.help) {
     printHelp();
     return 0;
@@ -460,6 +482,50 @@ export async function main(argv = process.argv) {
   if (parsed.installHook) {
     const hookPath = installHook({ cwd, hookName: parsed.hookName });
     console.log(`Installed ${parsed.hookName} hook at ${hookPath}`);
+    return 0;
+  }
+
+  if (parsed.connectGit) {
+    let token = parsed.connectToken;
+    if (!token) {
+      if (process.env.GITHUB_TOKEN) {
+        token = process.env.GITHUB_TOKEN;
+      } else {
+        console.error("Please provide your GitHub Personal Access Token.\nRun: gitxplain --connect-git <YOUR_TOKEN>\nOr set it in your .env as GITHUB_TOKEN=...");
+        return 1;
+      }
+    }
+    try {
+      console.log("Verifying token with GitHub API...");
+      const userInfo = await verifyGitToken(token);
+      await saveGitConnection(token, "github", userInfo);
+      console.log(`\nSuccessfully connected to GitHub as: \x1b[36m${userInfo.login}\x1b[0m`);
+      console.log(`Token saved securely to your local configuration.\n`);
+    } catch (e) {
+      console.error(`Token verification failed: ${e.message}`);
+      return 1;
+    }
+    return 0;
+  }
+
+  if (parsed.boot) {
+    if (!isGitConnected()) {
+      console.error("You must connect a GitHub account first to use the interactive agent.\nCommand: gitxplain --connect-git <YOUR_TOKEN>");
+      return 1;
+    }
+    const connection = loadGitConnection();
+    const userInfo = getGitUserInfo();
+    try {
+      const { getProviderConfig, validateProviderConfig } = await import(
+        "./services/aiService.js"
+      );
+      const config = getProviderConfig(parsed.provider, parsed.model);
+      validateProviderConfig(config);
+      await startChatSession(connection.token, parsed.provider, parsed.model, userInfo.name || connection.user?.login);
+    } catch (configError) {
+      console.error(`Missing LLM Key. Please check your .env variables or --provider flags.\n${configError.message}`);
+      return 1;
+    }
     return 0;
   }
 
