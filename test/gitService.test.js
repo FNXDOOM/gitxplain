@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   fetchCommitData,
+  gitPush,
   getRepositoryLog,
   getRepositoryStatus,
   resolveStashRef,
@@ -103,6 +104,19 @@ test("resolveTreeSha resolves the tree object for a ref", () => {
 
   assert.equal(treeSha, "tree123");
   assert.deepEqual(calls, ["rev-parse HEAD^{tree}"]);
+});
+
+test("gitPush runs plain git push with optional remote and branch", () => {
+  const calls = [];
+  const runner = (args) => {
+    calls.push(args.join(" "));
+    return "";
+  };
+
+  assert.equal(gitPush("/tmp", null, null, runner), "");
+  assert.equal(gitPush("/tmp", "origin", "main", runner), "");
+
+  assert.deepEqual(calls, ["push", "push origin main"]);
 });
 
 test("resolveStashRef converts plain indexes into stash refs", () => {

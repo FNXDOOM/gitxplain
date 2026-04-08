@@ -160,6 +160,15 @@ test("parseArgs handles pop command without an explicit stash index", () => {
   assert.equal(parsed.commitRef, null);
 });
 
+test("parseArgs handles push command with optional remote and branch", () => {
+  const parsed = parseArgs(["node", "gitxplain", "push", "origin", "main"]);
+
+  assert.equal(parsed.pushCommand, true);
+  assert.equal(parsed.pushRemote, "origin");
+  assert.equal(parsed.pushBranch, "main");
+  assert.equal(parsed.commitRef, null);
+});
+
 test("parseArgs handles commit subcommand and flag", () => {
   const commandParsed = parseArgs(["node", "gitxplain", "commit"]);
   assert.equal(commandParsed.commitCommand, true);
