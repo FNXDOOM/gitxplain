@@ -34,6 +34,20 @@ export function runGitCommand(args, cwd) {
   }
 }
 
+export function runGitCommandWithInput(args, cwd, input) {
+  try {
+    return execFileSync("git", args, {
+      cwd,
+      input,
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "pipe"]
+    }).trim();
+  } catch (error) {
+    const stderr = error.stderr?.toString().trim();
+    throw new Error(stderr || `Git command failed: git ${args.join(" ")}`);
+  }
+}
+
 export function runGitCommandUnchecked(args, cwd) {
   try {
     return {
@@ -381,8 +395,21 @@ export function gitCheckoutNewBranch(branchName, startPoint, cwd) {
   return runGitCommand(["checkout", "-b", branchName, startPoint], cwd);
 }
 
+export function gitCheckoutOrphan(branchName, cwd) {
+  return runGitCommand(["checkout", "--orphan", branchName], cwd);
+}
+
 export function gitDeleteBranch(branchName, cwd) {
   return runGitCommand(["branch", "-D", branchName], cwd);
+}
+
+export function gitRemoveCachedAll(cwd) {
+  return runGitCommand(["rm", "-r", "--cached", "--ignore-unmatch", "."], cwd);
+}
+
+export function createEmptyRootCommit(message, cwd) {
+  const emptyTree = runGitCommandWithInput(["mktree"], cwd, "");
+  return runGitCommand(["commit-tree", emptyTree, "-m", message], cwd);
 }
 
 export function writeCurrentIndexTree(cwd) {
