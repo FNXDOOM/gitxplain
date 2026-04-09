@@ -90,7 +90,6 @@ const FORMAT_FLAGS = new Map([
 
 const RESERVED_SUBCOMMANDS = new Set([
   "help",
-  "example",
   "install-hook",
   "git",
   "add",
@@ -115,11 +114,11 @@ function printHelp() {
 Usage:
   gitxplain help
   gitxplain --help
-  gitxplain example
-  gitxplain --example
   gitxplain git <native-git-args...>
-
-Git:
+  gitxplain <commit-id> [options]
+  gitxplain <start>..<end> [options]
+  gitxplain --branch [base-ref] [options]
+  gitxplain --pr [base-ref] [options]
   gitxplain commit
   gitxplain --commit
   gitxplain merge
@@ -144,152 +143,66 @@ Git:
   gitxplain install-hook [hook-name]
 
 Analysis:
-  gitxplain <commit-id> [options]
-  gitxplain <start>..<end> [options]
-  gitxplain --branch [base-ref] [options]
-  gitxplain --pr [base-ref] [options]
+  --summary       Generate a one-line summary of a change
+  --issues        Focus on the issue or failure being addressed
+  --fix           Explain the fix in simple terms
+  --impact        Explain behavior changes before vs after
+  --full          Generate a full structured analysis
+  --lines         Walk through the changed code file by file
+  --review        Generate review findings, risks, and suggestions
+  --security      Focus on security-relevant changes and concerns
+  --split         Propose splitting a commit into smaller atomic commits
+  --commit        Propose commits for current uncommitted changes
+  --execute       Execute a proposed split or commit plan
+  --dry-run       Preview the plan without executing it
 
-What It Does:
-  Analyze commits, ranges, branches, and working tree changes
-  Generate summaries, reviews, security checks, and line-by-line walkthroughs
-  Plan commits for uncommitted work and split oversized commits into atomic steps
-  Merge release-version branch changes into a dedicated release branch
-  Tag release-version commit windows on the current branch
-  Inspect release branch health, missing tags, and drift from the source branch
-  Inspect repository history and working tree status without calling the LLM
-  Inspect the current repository and scaffold GitHub Actions CI/CD workflows
-  Run quick local actions to stage, unstage, delete files, pop stashes, or push
-  Pull from a remote or soft-reset the latest commit without leaving the CLI
-  Pass through any native Git command and flags when you need the full Git surface
+Release:
+  merge           Preview or apply a merge into the release branch
+  tag             Preview or create release tags from version bumps
+  release status  Show release branch health and next recommended action
 
-Modes:
-  --summary    Generate a one-line summary of a change
-  --issues     Focus on the bug, issue, or failure being addressed
-  --fix        Explain the fix in simple, junior-friendly terms
-  --impact     Explain before-vs-after behavior changes
-  --full       Generate a full structured analysis
-  --lines      Walk through the changed code file by file
-  --review     Generate review findings, risks, and suggestions
-  --security   Focus on security-relevant changes and concerns
-  --split      Propose splitting a commit into smaller atomic commits
-  --merge      Preview or apply a merge into the release branch based on version bumps
-  --tag        Preview or create release tags based on version bumps
-  release      Show release branch health, missing tags, and next recommended action
-  --commit     Propose commits for current uncommitted changes
-  --log        Print Git log entries for the current repository
-  --status     Print Git working tree status for the current repository
-  --pipeline   Detect the current repository stack and create CI/CD workflow files
-  --execute    Execute a proposed split or commit plan
-  --dry-run    Preview the plan without executing it (default for --split and --commit)
+Repo:
+  log             Print Git log entries for the current repository
+  status          Print Git working tree status for the current repository
+  pipeline        Detect the current repository stack and create CI/CD workflow files
 
 Quick Actions:
-  add         Stage one or more files with git add
-  remove      Unstage one or more files with git restore --staged
-  remove hard Hard reset the repository to HEAD
-  del         Delete one or more files from the working tree
-  bin         Soft reset HEAD~1 while keeping your changes
-  pop         Pop a stash entry with a plain numeric index like "pop 2"
-  pull        Run git pull, optionally with a remote and branch
-  push        Run git push, optionally with a remote and branch
+  add             Stage one or more files with git add
+  remove          Unstage one or more files with git restore --staged
+  remove hard     Hard reset the repository to HEAD
+  del             Delete one or more files from the working tree
+  bin             Soft reset HEAD~1 while keeping your changes
+  pop             Pop a stash entry like "pop 2"
+  pull            Run git pull, optionally with a remote and branch
+  push            Run git push, optionally with a remote and branch
+  install-hook    Install the gitxplain hook
+  git             Pass through to native git commands
 
 Output:
-  --json       Print structured JSON output
-  --markdown   Print Markdown output
-  --html       Print HTML output
-  --quiet      Print only the main body without extra framing
-  --verbose    Print provider, model, cache, latency, and usage details
-  --clipboard  Copy the final output to the system clipboard
-  --stream     Stream model output as it is generated when supported
-
-Providers:
-  --provider   LLM provider: openai, groq, openrouter, gemini, ollama, chutes
-  --model      Override the model name
-
-Diff Budget:
-  --max-diff-lines <n>   Limit diff lines sent to the model
+  --provider <name>
+  --model <name>
+  --json
+  --markdown
+  --html
+  --quiet
+  --verbose
+  --clipboard
+  --stream
+  --max-diff-lines <n>
 
 Comparison:
-  --branch [base-ref]    Analyze the current branch against a base branch
-  --pr [base-ref]        Alias for --branch, useful for PR-style comparisons
-
-Provider Setup:
-  OpenAI:
-    export LLM_PROVIDER=openai
-    export OPENAI_API_KEY=your_key
-
-  Groq:
-    export LLM_PROVIDER=groq
-    export GROQ_API_KEY=your_key
-
-  OpenRouter:
-    export LLM_PROVIDER=openrouter
-    export OPENROUTER_API_KEY=your_key
-
-  Gemini:
-    export LLM_PROVIDER=gemini
-    export GEMINI_API_KEY=your_key
-
-  Ollama:
-    export LLM_PROVIDER=ollama
-    export OLLAMA_MODEL=llama3.2
-
-  Chutes:
-    export LLM_PROVIDER=chutes
-    export CHUTES_API_KEY=your_key
+  --branch [base-ref]   Analyze the current branch against a base branch
+  --pr [base-ref]       Alias for --branch, useful for PR-style comparisons
 
 Config:
   Project config: .gitxplainrc or .gitxplainrc.json
   User config: ~/.gitxplain/config.json
 
-Hook Installation:
-  gitxplain install-hook
-  gitxplain install-hook post-commit
-
 Notes:
   Run gitxplain inside a Git repository.
-  If no mode is supplied, gitxplain will prompt you to choose one interactively.
+  If no mode is supplied, gitxplain prompts you to choose one interactively.
   Use --provider or --model to override your config or environment for one command.
   Use gitxplain git <args...> to run any native Git subcommand with its normal flags.
-`);
-}
-
-function printExamples() {
-  console.log(`gitxplain examples
-
-Examples:
-  gitxplain HEAD~1 --full
-  gitxplain HEAD~1 --review
-  gitxplain HEAD~5..HEAD --markdown
-  gitxplain --branch main --review
-  gitxplain --pr origin/main --security --stream
-  gitxplain commit
-  gitxplain --commit --execute
-  gitxplain merge
-  gitxplain --merge --execute
-  gitxplain tag
-  gitxplain --tag --execute
-  gitxplain release
-  gitxplain release status
-  gitxplain log
-  gitxplain --log
-  gitxplain status
-  gitxplain --status
-  gitxplain pipeline
-  gitxplain --pipeline
-  gitxplain add README.md
-  gitxplain remove README.md
-  gitxplain remove hard
-  gitxplain del scratch.txt
-  gitxplain bin
-  gitxplain pop
-  gitxplain pop 2
-  gitxplain pull
-  gitxplain pull origin main
-  gitxplain push
-  gitxplain push origin main
-  gitxplain HEAD~1 --split
-  gitxplain HEAD --split --execute
-  gitxplain HEAD~1 --provider chutes --model deepseek-ai/DeepSeek-V3-0324
 `);
 }
 
@@ -364,7 +277,6 @@ export function parseArgs(argv, options = {}) {
   const explicitMode = [...MODE_FLAGS.entries()].find(([flag]) => flags.has(flag))?.[1] ?? null;
   const explicitFormat = [...FORMAT_FLAGS.entries()].find(([flag]) => flags.has(flag))?.[1] ?? null;
   const isInstallHook = subcommand === "install-hook";
-  const isExample = flags.has("--example") || subcommand === "example";
   const isNativeGitWrapper = subcommand === "git";
   const isLogCommand = subcommand === "log";
   const isStatusCommand = subcommand === "status";
@@ -386,7 +298,6 @@ export function parseArgs(argv, options = {}) {
   return {
     subcommand,
     help: flags.has("--help") || subcommand === "help",
-    example: isExample,
     nativeGitCommand: isNativeGitCommand,
     installHook: isInstallHook,
     logCommand: isLogCommand,
@@ -416,7 +327,6 @@ export function parseArgs(argv, options = {}) {
     pushBranch: isPushCommand ? positional[2] ?? null : null,
     commitRef:
       isInstallHook ||
-      isExample ||
       isNativeGitCommand ||
       isLogCommand ||
       isStatusCommand ||
@@ -571,11 +481,6 @@ export async function main(argv = process.argv) {
 
   if (parsed.help || hasNoCommandOrFlags) {
     printHelp();
-    return 0;
-  }
-
-  if (parsed.example) {
-    printExamples();
     return 0;
   }
 

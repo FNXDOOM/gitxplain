@@ -55,15 +55,6 @@ test("parseArgs treats git wrapper commands as passthrough", () => {
 test("parseArgs handles help and install-hook commands", () => {
   const helpParsed = parseArgs(["node", "gitxplain", "help"]);
   assert.equal(helpParsed.help, true);
-  assert.equal(helpParsed.example, false);
-
-  const exampleParsed = parseArgs(["node", "gitxplain", "example"]);
-  assert.equal(exampleParsed.example, true);
-  assert.equal(exampleParsed.commitRef, null);
-
-  const exampleFlagParsed = parseArgs(["node", "gitxplain", "--example"]);
-  assert.equal(exampleFlagParsed.example, true);
-  assert.equal(exampleFlagParsed.commitRef, null);
 
   const hookParsed = parseArgs(["node", "gitxplain", "install-hook", "post-commit"]);
   assert.equal(hookParsed.installHook, true);
