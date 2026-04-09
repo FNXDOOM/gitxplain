@@ -1,44 +1,92 @@
 #!/usr/bin/env node
 
+import path from "node:path";
 import process from "node:process";
-import { fetchCommitData, isGitRepository } from "./services/gitService.js";
+import { fileURLToPath } from "node:url";
+import { realpathSync } from "node:fs";
 import { generateExplanation } from "./services/aiService.js";
-import { formatOutput, formatJsonOutput } from "./services/outputFormatter.js";
+import { copyToClipboard } from "./services/clipboardService.js";
+import { loadConfig } from "./services/configService.js";
+import {
+  buildBranchRange,
+  fetchCommitData,
+  getDefaultBaseRef,
+  isGitRepository
+} from "./services/gitService.js";
+import { installHook } from "./services/hookService.js";
+import {
+  formatFooter,
+  formatHtmlOutput,
+  formatJsonOutput,
+  formatMarkdownOutput,
+  formatOutput,
+  formatPreamble
+} from "./services/outputFormatter.js";
 
-const ANALYSIS_FLAGS = new Map([
+const MODE_FLAGS = new Map([
   ["--summary", "summary"],
   ["--issues", "issues"],
   ["--fix", "fix"],
   ["--impact", "impact"],
   ["--full", "full"],
-  ["--lines", "lines"]
+  ["--lines", "lines"],
+  ["--review", "review"],
+  ["--security", "security"]
+]);
+
+const FORMAT_FLAGS = new Map([
+  ["--json", "json"],
+  ["--markdown", "markdown"],
+  ["--html", "html"]
 ]);
 
 function printHelp() {
-  console.log(`gitxplain - AI-powered Git commit explainer
+  console.log(`gitxplain - AI-powered Git and branch explainer
 
 Usage:
   gitxplain help
   gitxplain --help
+  gitxplain install-hook [hook-name]
   gitxplain <commit-id> [options]
+  gitxplain <start>..<end> [options]
+  gitxplain --branch [base-ref] [options]
+  gitxplain --pr [base-ref] [options]
 
-Options:
+Modes:
   --summary    Generate a one-line summary
   --issues     Focus on bug or issue analysis
   --fix        Explain the fix in simple terms
   --impact     Explain before-vs-after behavior changes
   --full       Generate a full structured analysis
   --lines      Explain the changed code line by line
+  --review     Generate a code review with risks and suggestions
+  --security   Focus on security risks introduced by the change
+
+Output:
+  --json       Print JSON output
+  --markdown   Print Markdown output
+  --html       Print HTML output
+  --quiet      Print only the explanation body
+  --verbose    Print provider, model, cache, latency, and usage details
+  --clipboard  Copy the final output to the system clipboard
+  --stream     Stream the explanation as it is generated when supported
+
+Providers:
   --provider   LLM provider: openai, groq, openrouter, gemini, ollama, chutes
   --model      Override the model name
-  --json       Print JSON output
-  --help       Show this help message
+
+Diff Budget:
+  --max-diff-lines <n>   Limit diff lines sent to the model
+
+Comparison:
+  --branch [base-ref]    Analyze current branch against base branch
+  --pr [base-ref]        Alias for --branch, useful for PR-style summaries
 
 Examples:
   gitxplain HEAD~1 --full
-  gitxplain a1b2c3d --summary
-  gitxplain HEAD~1 --lines
-  gitxplain HEAD~1 --provider groq --model llama-3.3-70b-versatile
+  gitxplain HEAD~5..HEAD --markdown
+  gitxplain --branch main --review
+  gitxplain --pr origin/main --security --stream
   gitxplain HEAD~1 --provider chutes --model deepseek-ai/DeepSeek-V3-0324
 
 Provider Setup:
@@ -66,51 +114,98 @@ Provider Setup:
     export LLM_PROVIDER=chutes
     export CHUTES_API_KEY=your_key
 
+Config:
+  Project config: .gitxplainrc or .gitxplainrc.json
+  User config: ~/.gitxplain/config.json
+
+Hook Installation:
+  gitxplain install-hook
+  gitxplain install-hook post-commit
+
 Notes:
   Run gitxplain inside a Git repository.
-  Use --provider or --model to override your environment for one command.
+  Use --provider or --model to override your config or environment for one command.
 `);
 }
 
 function getFlagValue(args, flagName) {
   const directIndex = args.findIndex((arg) => arg === flagName);
   if (directIndex >= 0) {
-    return args[directIndex + 1] ?? null;
+    const nextArg = args[directIndex + 1];
+    if (nextArg && !nextArg.startsWith("--")) {
+      return nextArg;
+    }
+
+    return null;
   }
 
   const inline = args.find((arg) => arg.startsWith(`${flagName}=`));
   return inline ? inline.slice(flagName.length + 1) : null;
 }
 
-function parseArgs(argv) {
+function parseNumber(value, fallback = null) {
+  if (value == null || value === "") {
+    return fallback;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  if (Number.isNaN(parsed) || parsed <= 0) {
+    throw new Error(`Invalid numeric value: ${value}`);
+  }
+
+  return parsed;
+}
+
+export function parseArgs(argv) {
   const args = argv.slice(2);
   const subcommand = args[0];
   const flags = new Set(args.filter((arg) => arg.startsWith("--")));
-  const valueFlags = new Set(["--provider", "--model"]);
+  const valueFlags = new Set(["--provider", "--model", "--max-diff-lines", "--branch", "--pr"]);
   const positional = [];
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
+
     if (!arg.startsWith("--")) {
       positional.push(arg);
       continue;
     }
 
+    if (arg.includes("=")) {
+      continue;
+    }
+
     if (valueFlags.has(arg)) {
-      index += 1;
+      const nextArg = args[index + 1];
+      if (nextArg && !nextArg.startsWith("--")) {
+        index += 1;
+      }
     }
   }
 
-  const commitId = positional[0];
-  const mode = [...ANALYSIS_FLAGS.entries()].find(([flag]) => flags.has(flag))?.[1] ?? null;
+  const explicitMode = [...MODE_FLAGS.entries()].find(([flag]) => flags.has(flag))?.[1] ?? null;
+  const explicitFormat = [...FORMAT_FLAGS.entries()].find(([flag]) => flags.has(flag))?.[1] ?? null;
+  const isInstallHook = subcommand === "install-hook";
 
   return {
-    commitId: subcommand === "help" ? null : commitId,
-    json: flags.has("--json"),
+    subcommand,
     help: flags.has("--help") || subcommand === "help",
-    mode,
+    installHook: isInstallHook,
+    hookName: isInstallHook ? positional[1] ?? "post-commit" : null,
+    commitRef: isInstallHook || subcommand === "help" ? null : positional[0] ?? null,
+    mode: explicitMode,
+    format: explicitFormat,
     provider: getFlagValue(args, "--provider"),
-    model: getFlagValue(args, "--model")
+    model: getFlagValue(args, "--model"),
+    maxDiffLines: parseNumber(getFlagValue(args, "--max-diff-lines")),
+    hasBranchFlag: flags.has("--branch") || args.some((arg) => arg.startsWith("--branch=")),
+    branchBase: getFlagValue(args, "--branch"),
+    hasPrFlag: flags.has("--pr") || args.some((arg) => arg.startsWith("--pr=")),
+    prBase: getFlagValue(args, "--pr"),
+    clipboard: flags.has("--clipboard"),
+    stream: flags.has("--stream"),
+    verbose: flags.has("--verbose"),
+    quiet: flags.has("--quiet")
   };
 }
 
@@ -136,6 +231,8 @@ async function chooseModeInteractively() {
       "4. Impact",
       "5. Full Analysis",
       "6. Line-by-Line Code Walkthrough",
+      "7. Code Review",
+      "8. Security Review",
       "> "
     ].join("\n")
   );
@@ -146,43 +243,171 @@ async function chooseModeInteractively() {
     "3": "fix",
     "4": "impact",
     "5": "full",
-    "6": "lines"
+    "6": "lines",
+    "7": "review",
+    "8": "security"
   };
 
   return selections[answer] ?? "full";
 }
 
-async function main() {
-  const parsed = parseArgs(process.argv);
-
-  if (parsed.help || !parsed.commitId) {
-    printHelp();
-    process.exit(parsed.help ? 0 : 1);
-  }
-
-  if (!isGitRepository(process.cwd())) {
-    console.error("gitxplain must be run inside a Git repository.");
-    process.exit(1);
-  }
-
-  const mode = parsed.mode ?? (await chooseModeInteractively());
-  const commitData = fetchCommitData(parsed.commitId, process.cwd());
-  const explanation = await generateExplanation({
-    mode,
-    commitData,
-    providerOverride: parsed.provider,
-    modelOverride: parsed.model
-  });
-
-  if (parsed.json) {
-    console.log(formatJsonOutput({ mode, commitData, explanation }));
-    return;
-  }
-
-  console.log(formatOutput({ mode, commitData, explanation }));
+function resolveRuntimeOptions(parsed, config) {
+  return {
+    mode: parsed.mode ?? config.mode ?? "full",
+    format: parsed.format ?? config.format ?? "plain",
+    provider: parsed.provider ?? config.provider ?? null,
+    model: parsed.model ?? config.model ?? null,
+    maxDiffLines: parsed.maxDiffLines ?? config.maxDiffLines ?? 800,
+    clipboard: parsed.clipboard || config.clipboard === true,
+    stream: parsed.stream || config.stream === true,
+    verbose: parsed.verbose || config.verbose === true,
+    quiet: parsed.quiet || config.quiet === true
+  };
 }
 
-main().catch((error) => {
-  console.error(error.message);
-  process.exit(1);
-});
+function resolveTargetRef(parsed, cwd) {
+  if (parsed.commitRef) {
+    return parsed.commitRef;
+  }
+
+  if (parsed.hasBranchFlag || parsed.hasPrFlag) {
+    const baseRef = parsed.branchBase || parsed.prBase || getDefaultBaseRef(cwd);
+    return buildBranchRange(baseRef, cwd);
+  }
+
+  return null;
+}
+
+function renderFinalOutput({ runtimeOptions, mode, commitData, explanation, responseMeta, promptMeta }) {
+  if (runtimeOptions.format === "json") {
+    return formatJsonOutput({ mode, commitData, explanation, responseMeta, promptMeta });
+  }
+
+  if (runtimeOptions.format === "markdown") {
+    return formatMarkdownOutput({ mode, commitData, explanation, responseMeta, promptMeta });
+  }
+
+  if (runtimeOptions.format === "html") {
+    return formatHtmlOutput({ mode, commitData, explanation, responseMeta, promptMeta });
+  }
+
+  return formatOutput({
+    mode,
+    commitData,
+    explanation,
+    responseMeta,
+    promptMeta,
+    options: runtimeOptions
+  });
+}
+
+export async function main(argv = process.argv) {
+  const cwd = process.cwd();
+  const config = loadConfig(cwd);
+  const parsed = parseArgs(argv);
+
+  if (parsed.help) {
+    printHelp();
+    return 0;
+  }
+
+  if (!isGitRepository(cwd)) {
+    console.error("gitxplain must be run inside a Git repository.");
+    return 1;
+  }
+
+  if (parsed.installHook) {
+    const hookPath = installHook({ cwd, hookName: parsed.hookName });
+    console.log(`Installed ${parsed.hookName} hook at ${hookPath}`);
+    return 0;
+  }
+
+  const runtimeOptions = resolveRuntimeOptions(parsed, config);
+  const targetRef = resolveTargetRef(parsed, cwd);
+
+  if (!targetRef) {
+    printHelp();
+    return 1;
+  }
+
+  const mode = parsed.mode ?? config.mode ?? (await chooseModeInteractively());
+  const commitData = fetchCommitData(targetRef, cwd);
+  const canStream = runtimeOptions.stream && runtimeOptions.format === "plain";
+  let streamStarted = false;
+
+  const { explanation, responseMeta, promptMeta } = await generateExplanation({
+    mode,
+    commitData,
+    providerOverride: runtimeOptions.provider,
+    modelOverride: runtimeOptions.model,
+    maxDiffLines: runtimeOptions.maxDiffLines,
+    stream: canStream,
+    onStart: canStream
+      ? ({ promptMeta: streamPromptMeta }) => {
+          if (!runtimeOptions.quiet && !streamStarted) {
+            process.stdout.write(
+              formatPreamble({
+                mode,
+                commitData,
+                responseMeta: null,
+                promptMeta: streamPromptMeta,
+                options: runtimeOptions
+              })
+            );
+            streamStarted = true;
+          }
+        }
+      : null,
+    onChunk: canStream ? (chunk) => process.stdout.write(chunk) : null
+  });
+
+  let renderedOutput;
+
+  if (canStream) {
+    process.stdout.write("\n");
+    if (runtimeOptions.verbose) {
+      process.stdout.write(formatFooter({ responseMeta, promptMeta, options: runtimeOptions }));
+    }
+
+    renderedOutput = renderFinalOutput({
+      runtimeOptions,
+      mode,
+      commitData,
+      explanation,
+      responseMeta,
+      promptMeta
+    });
+  } else {
+    renderedOutput = renderFinalOutput({
+      runtimeOptions,
+      mode,
+      commitData,
+      explanation,
+      responseMeta,
+      promptMeta
+    });
+    console.log(renderedOutput);
+  }
+
+  if (runtimeOptions.clipboard) {
+    copyToClipboard(renderedOutput);
+    if (!runtimeOptions.quiet) {
+      console.error("Copied output to clipboard.");
+    }
+  }
+
+  return 0;
+}
+
+const entryFile = fileURLToPath(import.meta.url);
+const executedFile = process.argv[1] ? realpathSync(path.resolve(process.argv[1])) : "";
+
+if (executedFile === entryFile) {
+  main().then(
+    (code) => process.exit(code),
+    (error) => {
+      console.error(error.message);
+      process.exit(1);
+    }
+  );
+}

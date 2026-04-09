@@ -1,6 +1,6 @@
 # gitxplain
 
-`gitxplain` is a Node.js CLI that analyzes a Git commit and generates structured, human-readable explanations with AI.
+`gitxplain` is a Node.js CLI that analyzes Git commits, commit ranges, and branch diffs to generate structured, human-readable explanations with AI.
 
 Supported providers:
 
@@ -14,7 +14,14 @@ Supported providers:
 ## Features
 
 - Explains what a commit does, why it exists, and how the fix works
-- Supports focused output modes like summary, issue, fix, and impact
+- Supports focused output modes like summary, issue, fix, impact, review, security, and line-by-line walkthroughs
+- Supports single commits, commit ranges, and branch-vs-base comparisons
+- Truncates oversized diffs before sending them to the model and reports that truncation
+- Streams output for supported providers
+- Caches responses locally to reduce repeat API costs
+- Supports plain, JSON, Markdown, and HTML output
+- Supports clipboard copy, verbosity controls, and hook installation
+- Supports project-level and user-level config files
 - Falls back to an interactive prompt when no analysis flag is supplied
 - Returns plain text or JSON output
 - Uses native Node APIs only, so the MVP has no runtime dependencies
@@ -38,6 +45,11 @@ Optional environment variables:
 - `OLLAMA_MODEL`, `OLLAMA_BASE_URL` default: `http://127.0.0.1:11434/v1`
 - `CHUTES_API_KEY`, `CHUTES_MODEL`, `CHUTES_BASE_URL`
 
+Optional config files:
+
+- Project: `.gitxplainrc` or `.gitxplainrc.json`
+- User: `~/.gitxplain/config.json`
+
 You can start from:
 
 ```bash
@@ -55,7 +67,19 @@ gitxplain <commit-id> --fix
 gitxplain <commit-id> --impact
 gitxplain <commit-id> --full
 gitxplain <commit-id> --lines
+gitxplain <commit-id> --review
+gitxplain <commit-id> --security
 gitxplain <commit-id> --json
+gitxplain <commit-id> --markdown
+gitxplain <commit-id> --html
+gitxplain <commit-id> --stream
+gitxplain <commit-id> --clipboard
+gitxplain <commit-id> --verbose
+gitxplain <commit-id> --quiet
+gitxplain <start>..<end> --markdown
+gitxplain --branch main --review
+gitxplain --pr origin/main --security
+gitxplain install-hook
 gitxplain <commit-id> --provider openrouter --model anthropic/claude-3.7-sonnet
 gitxplain <commit-id> --provider chutes --model deepseek-ai/DeepSeek-V3-0324
 ```
@@ -66,6 +90,8 @@ Examples:
 npm start -- HEAD~1 --summary
 npm start -- a1b2c3d --full
 npm start -- HEAD~1 --lines
+npm start -- HEAD~5..HEAD --markdown
+npm start -- --branch main --review
 npm start -- HEAD~1 --provider groq --model llama-3.3-70b-versatile
 npm start -- HEAD~1 --provider gemini --model gemini-2.5-flash
 npm start -- HEAD~1 --provider chutes --model deepseek-ai/DeepSeek-V3-0324
@@ -87,6 +113,8 @@ gitxplain help
 gitxplain HEAD~1 --full
 gitxplain a1b2c3d --summary
 gitxplain HEAD~1 --lines
+gitxplain HEAD~5..HEAD --markdown
+gitxplain --branch main --review
 ```
 
 The `gitxplain help` command also prints quick API-key setup examples for:
@@ -112,9 +140,74 @@ node /home/guru/Dev/gitxplain/cli/index.js HEAD~1 --full
 - `--impact`: before-vs-after explanation focused on behavior changes
 - `--full`: full structured analysis
 - `--lines`: file-by-file, line-by-line walkthrough of the changed code
+- `--review`: code review findings with actionable suggestions
+- `--security`: security-focused analysis of the change
 - `--json`: return structured JSON instead of formatted text
+- `--markdown`: return Markdown output
+- `--html`: return HTML output
 
 If no analysis flag is supplied, the CLI asks what kind of explanation you want.
+
+## Comparison Modes
+
+Single commit:
+
+```bash
+gitxplain HEAD~1 --full
+```
+
+Commit range:
+
+```bash
+gitxplain HEAD~5..HEAD --markdown
+```
+
+Branch or PR-style comparison:
+
+```bash
+gitxplain --branch main --review
+gitxplain --pr origin/main --security
+```
+
+`--branch` and `--pr` compare the current branch to a base ref using the merge base with `HEAD`.
+
+## Config File
+
+Example `.gitxplainrc`:
+
+```json
+{
+  "provider": "groq",
+  "model": "llama-3.3-70b-versatile",
+  "mode": "full",
+  "format": "markdown",
+  "maxDiffLines": 600,
+  "stream": true,
+  "verbose": false
+}
+```
+
+CLI flags still override config values for a single command.
+
+## Clipboard, Streaming, And Hooks
+
+Copy the final output to your clipboard:
+
+```bash
+gitxplain HEAD~1 --markdown --clipboard
+```
+
+Stream long responses as they arrive:
+
+```bash
+gitxplain HEAD~1 --full --stream
+```
+
+Install a post-commit hook that saves a Markdown explanation under `.git/gitxplain/last-explanation.md`:
+
+```bash
+gitxplain install-hook
+```
 
 ## Provider Setup
 
@@ -165,6 +258,7 @@ export CHUTES_MODEL=deepseek-ai/DeepSeek-V3-0324
 
 ```bash
 npm run lint
+npm test
 ```
 
 To make the command globally available during local development:
