@@ -320,6 +320,44 @@ test("selectReleaseTags keeps direct version jumps without inventing intermediat
   assert.equal(selection.tags[0].targetShortSha, "2222222");
 });
 
+test("selectReleaseTags keeps only the latest window for repeated versions", () => {
+  const sourceCommits = [
+    {
+      sha: "1111111111111111111111111111111111111111",
+      shortSha: "1111111",
+      subject: "bump 0.1.0",
+      releaseVersion: "0.1.0",
+      versionChange: { from: [], to: ["0.1.0"], hasVersionChange: false }
+    },
+    {
+      sha: "2222222222222222222222222222222222222222",
+      shortSha: "2222222",
+      subject: "bump 0.1.1",
+      releaseVersion: "0.1.1",
+      versionChange: { from: ["0.1.0"], to: ["0.1.1"], hasVersionChange: true }
+    },
+    {
+      sha: "3333333333333333333333333333333333333333",
+      shortSha: "3333333",
+      subject: "reset to 0.1.0",
+      releaseVersion: "0.1.0",
+      versionChange: { from: ["0.1.2"], to: ["0.1.0"], hasVersionChange: true }
+    },
+    {
+      sha: "4444444444444444444444444444444444444444",
+      shortSha: "4444444",
+      subject: "bump 0.1.2 again",
+      releaseVersion: "0.1.2",
+      versionChange: { from: ["0.1.0"], to: ["0.1.2"], hasVersionChange: true }
+    }
+  ];
+
+  const selection = selectReleaseTags(sourceCommits, []);
+
+  assert.deepEqual(selection.tags.map((tag) => tag.tagName), ["v0.1.1", "v0.1.0", "v0.1.2"]);
+  assert.deepEqual(selection.tags.map((tag) => tag.targetShortSha), ["2222222", "3333333", "4444444"]);
+});
+
 test("selectReleaseTagsFromReleaseCommits maps each untagged release commit to a tag", () => {
   const releaseCommits = [
     {

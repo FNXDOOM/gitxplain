@@ -306,6 +306,23 @@ export function buildReleaseWindows(sourceCommits) {
   return windows;
 }
 
+function selectLatestWindowsPerVersion(windows) {
+  const seenVersions = new Set();
+  const latestWindows = [];
+
+  for (let index = windows.length - 1; index >= 0; index -= 1) {
+    const window = windows[index];
+    if (!window.version || seenVersions.has(window.version)) {
+      continue;
+    }
+
+    seenVersions.add(window.version);
+    latestWindows.push(window);
+  }
+
+  return latestWindows.reverse();
+}
+
 export function selectReleaseWindows(sourceCommits, releaseCommits = []) {
   const windows = buildReleaseWindows(sourceCommits);
   const releasedVersions = getReleasedVersions(releaseCommits);
@@ -319,7 +336,7 @@ export function selectReleaseWindows(sourceCommits, releaseCommits = []) {
 }
 
 export function selectReleaseTags(sourceCommits, existingTagNames = []) {
-  const windows = buildReleaseWindows(sourceCommits);
+  const windows = selectLatestWindowsPerVersion(buildReleaseWindows(sourceCommits));
   const taggedVersions = extractTaggedVersions(existingTagNames);
   const tags = windows
     .filter((window) => !taggedVersions.has(window.version))
@@ -344,7 +361,7 @@ export function selectReleaseTags(sourceCommits, existingTagNames = []) {
 
 function findLatestTaggedSourceVersion(sourceCommits, taggedVersions) {
   const tagged = new Set(taggedVersions);
-  return buildReleaseWindows(sourceCommits)
+  return selectLatestWindowsPerVersion(buildReleaseWindows(sourceCommits))
     .map((window) => window.version)
     .filter((version) => version && tagged.has(version))
     .at(-1) ?? null;
