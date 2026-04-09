@@ -373,37 +373,32 @@ export function selectReleaseTagsFromReleaseCommits(releaseCommits, existingTagN
   };
 }
 
-function getReleaseTrackSourceCommitShas(releaseExists, baseRef, cwd) {
+function getReleaseTrackSourceCommitShas(releaseExists, baseRef, sourceRef, cwd) {
   if (!releaseExists) {
     return {
       mergeBase: null,
-      sourceCommitShas: listBranchCommits("HEAD", cwd)
+      sourceCommitShas: listBranchCommits(sourceRef, cwd)
     };
   }
 
   try {
-    const mergeBase = getMergeBase(baseRef, "HEAD", cwd);
+    const mergeBase = getMergeBase(baseRef, sourceRef, cwd);
     return {
       mergeBase,
-      sourceCommitShas: listCommitsAfter(mergeBase, "HEAD", cwd)
+      sourceCommitShas: listCommitsAfter(mergeBase, sourceRef, cwd)
     };
   } catch {
     return {
       mergeBase: null,
-      sourceCommitShas: listBranchCommits("HEAD", cwd)
+      sourceCommitShas: listBranchCommits(sourceRef, cwd)
     };
   }
 }
 
-export function buildReleaseMergePlan(cwd) {
-  const sourceBranch = getCurrentBranchName(cwd);
-  if (sourceBranch === RELEASE_BRANCH) {
-    throw new Error(`Already on "${RELEASE_BRANCH}". Switch to a source branch before running --merge.`);
-  }
-
+function buildReleaseMergePlanForSource(sourceBranch, sourceRef, cwd) {
   const releaseExists = localBranchExists(RELEASE_BRANCH, cwd);
   const baseRef = releaseExists ? RELEASE_BRANCH : getDefaultBaseRef(cwd);
-  const { mergeBase, sourceCommitShas } = getReleaseTrackSourceCommitShas(releaseExists, baseRef, cwd);
+  const { mergeBase, sourceCommitShas } = getReleaseTrackSourceCommitShas(releaseExists, baseRef, sourceRef, cwd);
   const sourceCommits = sourceCommitShas.map((sha) => inspectCommit(sha, cwd));
   const releaseCommits = releaseExists ? listBranchCommits(RELEASE_BRANCH, cwd).map((sha) => inspectCommit(sha, cwd)) : [];
   const selection = selectReleaseWindows(sourceCommits, releaseCommits);
@@ -421,6 +416,15 @@ export function buildReleaseMergePlan(cwd) {
   };
 }
 
+export function buildReleaseMergePlan(cwd) {
+  const sourceBranch = getCurrentBranchName(cwd);
+  if (sourceBranch === RELEASE_BRANCH) {
+    throw new Error(`Already on "${RELEASE_BRANCH}". Switch to a source branch before running --merge.`);
+  }
+
+  return buildReleaseMergePlanForSource(sourceBranch, "HEAD", cwd);
+}
+
 export function buildReleaseTagPlan(cwd) {
   const sourceBranch = getCurrentBranchName(cwd);
   if (sourceBranch === RELEASE_BRANCH) {
@@ -429,7 +433,7 @@ export function buildReleaseTagPlan(cwd) {
 
   const releaseExists = localBranchExists(RELEASE_BRANCH, cwd);
   const baseRef = releaseExists ? RELEASE_BRANCH : getDefaultBaseRef(cwd);
-  const { mergeBase, sourceCommitShas } = getReleaseTrackSourceCommitShas(releaseExists, baseRef, cwd);
+  const { mergeBase, sourceCommitShas } = getReleaseTrackSourceCommitShas(releaseExists, baseRef, "HEAD", cwd);
   const existingTagNames = listTags(cwd);
   const selection = releaseExists
     ? selectReleaseTagsFromReleaseCommits(
@@ -460,6 +464,132 @@ export function finalizeReleaseTagPlan(plan) {
   return {
     ...plan,
     totalCommits: plan.tags.reduce((count, tag) => count + tag.commits.length, 0)
+  };
+}
+
+function findLatestReleaseVersion(releaseCommits) {
+  return releaseCommits
+    .map((commit) => commit.subject.match(RELEASE_SUBJECT_PATTERN)?.[1]?.trim() ?? null)
+    .filter(Boolean)
+    .at(-1) ?? null;
+}
+
+function findLatestTaggedReleaseVersion(releaseCommits, taggedVersions) {
+  const tagged = new Set(taggedVersions);
+  return releaseCommits
+    .map((commit) => commit.subject.match(RELEASE_SUBJECT_PATTERN)?.[1]?.trim() ?? null)
+    .filter((version) => version && tagged.has(version))
+    .at(-1) ?? null;
+}
+
+function buildDriftStatus(sourceRef, sourceLabel, releaseExists, cwd) {
+  if (!releaseExists) {
+    return {
+      hasReleaseBranch: false,
+      disconnectedHistory: false,
+      sourceOnlyCount: listBranchCommits(sourceRef, cwd).length,
+      releaseOnlyCount: 0,
+      summary: `Release branch "${RELEASE_BRANCH}" does not exist yet.`
+    };
+  }
+
+  try {
+    const mergeBase = getMergeBase(sourceRef, RELEASE_BRANCH, cwd);
+    const sourceOnlyCount = listCommitsAfter(mergeBase, sourceRef, cwd).length;
+    const releaseOnlyCount = listCommitsAfter(mergeBase, RELEASE_BRANCH, cwd).length;
+
+    return {
+      hasReleaseBranch: true,
+      disconnectedHistory: false,
+      mergeBase,
+      sourceOnlyCount,
+      releaseOnlyCount,
+      summary:
+        sourceOnlyCount === 0 && releaseOnlyCount === 0
+          ? `${sourceLabel} and ${RELEASE_BRANCH} point at the same history.`
+          : `${sourceLabel} has ${sourceOnlyCount} unique commit(s); ${RELEASE_BRANCH} has ${releaseOnlyCount} unique commit(s).`
+    };
+  } catch {
+    return {
+      hasReleaseBranch: true,
+      disconnectedHistory: true,
+      mergeBase: null,
+      sourceOnlyCount: listBranchCommits(sourceRef, cwd).length,
+      releaseOnlyCount: listBranchCommits(RELEASE_BRANCH, cwd).length,
+      summary: `${sourceLabel} and ${RELEASE_BRANCH} do not share a merge base. This is expected when the release branch is orphaned.`
+    };
+  }
+}
+
+function getNextRecommendedAction({ releaseExists, mergePlan, missingTagCount }) {
+  if (!releaseExists && mergePlan.windows.length > 0) {
+    return `Run \`gitxplain merge --execute\` to create ${RELEASE_BRANCH} and promote ${mergePlan.windows.length} unreleased version(s).`;
+  }
+
+  if (!releaseExists) {
+    return `No ${RELEASE_BRANCH} branch exists yet, and no releasable version bumps were detected.`;
+  }
+
+  if (mergePlan.windows.length > 0 && missingTagCount > 0) {
+    return `Run \`gitxplain merge --execute\` first, then \`gitxplain tag --execute\` to finish tagging release commits.`;
+  }
+
+  if (mergePlan.windows.length > 0) {
+    return `Run \`gitxplain merge --execute\` to promote ${mergePlan.windows.length} unreleased version(s) to ${RELEASE_BRANCH}.`;
+  }
+
+  if (missingTagCount > 0) {
+    return `Run \`gitxplain tag --execute\` to create ${missingTagCount} missing release tag(s).`;
+  }
+
+  return "No action required. Release branch and tags are up to date.";
+}
+
+export function buildReleaseStatus(cwd) {
+  const currentBranch = getCurrentBranchName(cwd);
+  const releaseExists = localBranchExists(RELEASE_BRANCH, cwd);
+  const sourceBranch = currentBranch === RELEASE_BRANCH ? getDefaultBaseRef(cwd) : currentBranch;
+  const sourceRef = currentBranch === RELEASE_BRANCH ? sourceBranch : "HEAD";
+  const mergePlan = finalizeReleaseMergePlan(buildReleaseMergePlanForSource(sourceBranch, sourceRef, cwd));
+  const releaseCommits = releaseExists ? listBranchCommits(RELEASE_BRANCH, cwd).map((sha) => inspectCommit(sha, cwd)) : [];
+  const tagSelection = releaseExists
+    ? selectReleaseTagsFromReleaseCommits(releaseCommits, listTags(cwd))
+    : { tags: [], taggedVersions: [], latestDetectedVersion: null };
+  const drift = buildDriftStatus(sourceRef, sourceBranch, releaseExists, cwd);
+  const missingTagVersions = tagSelection.tags.map((tag) => tag.tagName);
+  const unmergedVersions = mergePlan.windows.map((window) => window.version);
+
+  return {
+    sourceBranch,
+    sourceRef,
+    releaseBranch: RELEASE_BRANCH,
+    releaseExists,
+    currentBranch,
+    health:
+      !releaseExists || unmergedVersions.length > 0 || missingTagVersions.length > 0
+        ? "needs attention"
+        : "healthy",
+    latestSourceVersion: mergePlan.latestDetectedVersion,
+    latestReleaseVersion: findLatestReleaseVersion(releaseCommits),
+    latestTaggedVersion: findLatestTaggedReleaseVersion(releaseCommits, tagSelection.taggedVersions),
+    unmergedVersions,
+    missingTagVersions,
+    drift,
+    mergePlan,
+    tagPlan: finalizeReleaseTagPlan({
+      sourceBranch,
+      baseRef: mergePlan.baseRef,
+      mergeBase: mergePlan.mergeBase,
+      releaseExists,
+      taggedVersions: tagSelection.taggedVersions,
+      latestDetectedVersion: tagSelection.latestDetectedVersion,
+      tags: tagSelection.tags
+    }),
+    nextRecommendedAction: getNextRecommendedAction({
+      releaseExists,
+      mergePlan,
+      missingTagCount: missingTagVersions.length
+    })
   };
 }
 
@@ -525,6 +655,50 @@ export function formatReleaseTagPlan(plan) {
       }
     }
   }
+
+  return lines.join("\n");
+}
+
+export function formatReleaseStatus(status) {
+  const lines = [
+    colorize("Release Status", ANSI.bold + ANSI.cyan),
+    `${colorize("Source Branch:", ANSI.bold + ANSI.cyan)} ${status.sourceBranch}`,
+    `${colorize("Release Branch:", ANSI.bold + ANSI.cyan)} ${status.releaseBranch}`,
+    `${colorize("Current Branch:", ANSI.bold + ANSI.cyan)} ${status.currentBranch}`,
+    `${colorize("Overall:", ANSI.bold + ANSI.cyan)} ${status.health}`,
+    `${colorize("Latest Source Version:", ANSI.bold + ANSI.cyan)} ${status.latestSourceVersion ?? "none"}`,
+    `${colorize("Latest Release Version:", ANSI.bold + ANSI.cyan)} ${status.latestReleaseVersion ?? "none"}`,
+    `${colorize("Latest Tagged Version:", ANSI.bold + ANSI.cyan)} ${status.latestTaggedVersion ?? "none"}`
+  ];
+
+  lines.push("");
+  lines.push(colorize("Unmerged Version Bumps", ANSI.bold + ANSI.yellow));
+  if (status.unmergedVersions.length === 0) {
+    lines.push("none");
+  } else {
+    for (const window of status.mergePlan.windows) {
+      lines.push(`- ${window.version} (${window.startRef}..${window.endRef})`);
+    }
+  }
+
+  lines.push("");
+  lines.push(colorize("Missing Release Tags", ANSI.bold + ANSI.yellow));
+  if (status.missingTagVersions.length === 0) {
+    lines.push("none");
+  } else {
+    for (const tag of status.tagPlan.tags) {
+      lines.push(`- ${tag.tagName} -> ${tag.targetShortSha} ${tag.targetSubject}`);
+    }
+  }
+
+  lines.push("");
+  lines.push(colorize("Branch Drift", ANSI.bold + ANSI.yellow));
+  lines.push(status.drift.summary);
+  lines.push(`- Commits only on ${status.sourceBranch}: ${status.drift.sourceOnlyCount}`);
+  lines.push(`- Commits only on ${status.releaseBranch}: ${status.drift.releaseOnlyCount}`);
+
+  lines.push("");
+  lines.push(`${colorize("Next Recommended Action:", ANSI.bold + ANSI.cyan)} ${status.nextRecommendedAction}`);
 
   return lines.join("\n");
 }

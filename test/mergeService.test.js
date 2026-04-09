@@ -7,12 +7,14 @@ import path from "node:path";
 import {
   buildReleaseTagPlan,
   buildReleaseMergePlan,
+  buildReleaseStatus,
   buildReleaseWindows,
   detectVersionChanges,
   executeReleaseMerge,
   finalizeReleaseMergePlan,
   finalizeReleaseTagPlan,
   formatReleaseMergePlan,
+  formatReleaseStatus,
   formatReleaseTagPlan,
   selectReleaseTags,
   selectReleaseTagsFromReleaseCommits,
@@ -396,6 +398,41 @@ test("formatReleaseTagPlan renders release tag targets", () => {
   assert.match(output, /Target Commit: 4444444 chore: bump to 0\.1\.2/);
 });
 
+test("formatReleaseStatus renders release health sections", () => {
+  const output = formatReleaseStatus({
+    sourceBranch: "main",
+    releaseBranch: "release",
+    currentBranch: "main",
+    health: "needs attention",
+    latestSourceVersion: "0.1.3",
+    latestReleaseVersion: "0.1.2",
+    latestTaggedVersion: "0.1.1",
+    unmergedVersions: ["0.1.3"],
+    missingTagVersions: ["0.1.2"],
+    drift: {
+      summary: "main and release do not share a merge base. This is expected when the release branch is orphaned.",
+      sourceOnlyCount: 4,
+      releaseOnlyCount: 3
+    },
+    mergePlan: {
+      windows: [{ version: "0.1.3", startRef: "aaaaaaa", endRef: "bbbbbbb" }]
+    },
+    tagPlan: {
+      tags: [{ tagName: "0.1.2", targetShortSha: "ccccccc", targetSubject: "release 0.1.2" }]
+    },
+    nextRecommendedAction: "Run `gitxplain merge --execute` first, then `gitxplain tag --execute` to finish tagging release commits."
+  });
+
+  assert.match(output, /Release Status/);
+  assert.match(output, /Overall: needs attention/);
+  assert.match(output, /Unmerged Version Bumps/);
+  assert.match(output, /0\.1\.3 \(aaaaaaa\.\.bbbbbbb\)/);
+  assert.match(output, /Missing Release Tags/);
+  assert.match(output, /0\.1\.2 -> ccccccc release 0\.1\.2/);
+  assert.match(output, /Branch Drift/);
+  assert.match(output, /Next Recommended Action:/);
+});
+
 test("executeReleaseMerge creates an orphan release branch without an initialization commit", () => {
   const repoDir = mkdtempSync(path.join(os.tmpdir(), "gitxplain-release-"));
   const runGit = (...args) =>
@@ -606,6 +643,51 @@ test("buildReleaseTagPlan works when release is disconnected from main", () => {
     assert.equal(tagPlan.mergeBase, null);
     assert.deepEqual(tagPlan.taggedVersions, ["0.1.0"]);
     assert.deepEqual(tagPlan.tags.map((tag) => tag.tagName), ["0.1.1"]);
+  } finally {
+    rmSync(repoDir, { recursive: true, force: true });
+  }
+});
+
+test("buildReleaseStatus reports missing tags and unmerged versions for an orphan release branch", () => {
+  const repoDir = mkdtempSync(path.join(os.tmpdir(), "gitxplain-release-status-"));
+  const runGit = (...args) =>
+    execFileSync("git", args, {
+      cwd: repoDir,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"]
+    }).trim();
+
+  try {
+    runGit("init", "-b", "main");
+    runGit("config", "user.name", "Test User");
+    runGit("config", "user.email", "test@example.com");
+
+    writeFileSync(path.join(repoDir, "package.json"), `${JSON.stringify({ name: "gitxplain", version: "0.1.0" }, null, 2)}\n`);
+    runGit("add", "package.json");
+    runGit("commit", "-m", "chore: scaffold app");
+
+    writeFileSync(path.join(repoDir, "package.json"), `${JSON.stringify({ name: "gitxplain", version: "0.1.1" }, null, 2)}\n`);
+    runGit("commit", "-am", "chore: bump version to 0.1.1");
+
+    const firstMergePlan = finalizeReleaseMergePlan(buildReleaseMergePlan(repoDir));
+    executeReleaseMerge(firstMergePlan, repoDir);
+    runGit("tag", "-a", "0.1.1", "release", "-m", "release 0.1.1");
+    runGit("checkout", "main");
+
+    writeFileSync(path.join(repoDir, "package.json"), `${JSON.stringify({ name: "gitxplain", version: "0.1.2" }, null, 2)}\n`);
+    runGit("commit", "-am", "chore: bump version to 0.1.2");
+
+    const status = buildReleaseStatus(repoDir);
+
+    assert.equal(status.health, "needs attention");
+    assert.equal(status.releaseExists, true);
+    assert.equal(status.latestSourceVersion, "0.1.2");
+    assert.equal(status.latestReleaseVersion, "0.1.1");
+    assert.equal(status.latestTaggedVersion, "0.1.1");
+    assert.deepEqual(status.unmergedVersions, ["0.1.2"]);
+    assert.deepEqual(status.missingTagVersions, ["0.1.0"]);
+    assert.equal(status.drift.disconnectedHistory, true);
+    assert.match(status.nextRecommendedAction, /merge --execute/);
   } finally {
     rmSync(repoDir, { recursive: true, force: true });
   }
