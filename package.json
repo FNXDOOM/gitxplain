@@ -1,6 +1,6 @@
 {
   "name": "gitxplain",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "AI-powered Git commit explainer CLI",
   "type": "module",
   "bin": {
@@ -9,7 +9,7 @@
   },
   "scripts": {
     "start": "node ./cli/index.js",
-    "lint": "node --check ./cli/index.js && node --check ./cli/services/chatService.js && node --check ./cli/services/gitConnectionService.js && node --check ./cli/services/envLoader.js",
+    "lint": "node --check ./cli/index.js && node --check ./cli/services/chatService.js && node --check ./cli/services/gitConnectionService.js && node --check ./cli/services/envLoader.js && node --check ./cli/services/pipelineService.js",
     "test": "node --test"
   },
   "keywords": [

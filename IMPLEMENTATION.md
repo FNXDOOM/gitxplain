@@ -2,16 +2,16 @@
 
 ## Overview
 Successfully implemented two major new features for gitxplain:
-1. **Git Connection** (`--connect-git`) - Connect GitHub account with Personal Access Token
+1. **GitHub Connection** (`--connect-github`) - Connect GitHub account with Personal Access Token
 2. **Interactive Chat Interface** (`--boot`) - Start a chat session with repository context
 
 ## New Features
 
-### 1. Git Connection Feature (`--connect-git`)
+### 1. GitHub Connection Feature (`--connect-github`)
 
 **Command:**
 ```bash
-gitxplain --connect-git
+gitxplain --connect-github
 ```
 
 **Functionality:**
@@ -39,7 +39,7 @@ gitxplain --boot --provider groq --model llama-3.3-70b-versatile
 ```
 
 **Functionality:**
-- Requires prior git connection (`gitxplain --connect-git`)
+- Requires prior git connection (`gitxplain --connect-github`)
 - Initializes repository context (commits, branches, status)
 - Launches interactive readline interface
 - Maintains conversation history with LLM
@@ -75,11 +75,11 @@ gitxplain --boot --provider groq --model llama-3.3-70b-versatile
 ### 3. Updated CLI (`cli/index.js`)
 
 **New Flags:**
-- `--connect-git` - Initialize GitHub connection
+- `--connect-github` - Initialize GitHub connection
 - `--boot` - Start interactive chat session
 
 **Updated Features:**
-- `parseArgs()` - Now detects `connectGit` and `boot` flags
+- `parseArgs()` - Now detects `connectGitHub` and `boot` flags
 - `handleConnectGit()` - Manages connection workflow
 - `handleBoot()` - Manages chat initialization
 - `printHelp()` - Updated documentation
@@ -103,7 +103,7 @@ gitxplain --boot --provider groq --model llama-3.3-70b-versatile
 
 ### `README.md`
 - Added new features documentation
-- Added usage examples for `--connect-git` and `--boot`
+- Added usage examples for `--connect-github` and `--boot`
 - Added section explaining chat commands
 
 ## Connection Storage
@@ -127,7 +127,7 @@ gitxplain --boot --provider groq --model llama-3.3-70b-versatile
 ## Testing
 
 ✅ All features tested and working:
-1. `--connect-git` successfully saves PAT
+1. `--connect-github` successfully saves PAT
 2. Connection file created at correct location
 3. `--boot` checks for existing connection
 4. Help text updated with new commands
@@ -137,7 +137,7 @@ gitxplain --boot --provider groq --model llama-3.3-70b-versatile
 
 ### Connect to GitHub
 ```bash
-gitxplain --connect-git
+gitxplain --connect-github
 # Enter your PAT when prompted
 # Output: Git Connected Successfully
 ```
@@ -172,7 +172,7 @@ You: exit
 
 ```
 CLI (index.js)
-├── parseArgs() → detects --connect-git, --boot
+├── parseArgs() → detects --connect-github, --boot
 ├── handleConnectGit()
 │   └── gitConnectionService.js
 │       ├── saveGitConnection()

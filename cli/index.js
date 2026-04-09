@@ -22,13 +22,18 @@ import {
   fetchCommitData,
   fetchWorkingTreeData,
   gitAddFiles,
+  gitPull,
   gitPush,
+  gitResetHard,
+  gitResetSoft,
   gitStashPop,
   gitRestoreStaged,
   getRepositoryLog,
   getRepositoryStatus,
   getDefaultBaseRef,
   isGitRepository,
+  listGitSubcommands,
+  runNativeGitPassthrough,
   resolveStashRef
 } from "./services/gitService.js";
 import { installHook } from "./services/hookService.js";
@@ -50,6 +55,12 @@ import {
   formatOutput,
   formatPreamble
 } from "./services/outputFormatter.js";
+import {
+  formatPipelineRecommendations,
+  inspectRepositoryForPipeline,
+  resolvePipelineSelection,
+  writePipelineFiles
+} from "./services/pipelineService.js";
 import { executeCommitPlan, formatCommitPlan, parseCommitPlan, reconcileCommitPlan } from "./services/commitService.js";
 import {
   executeSplit,
@@ -82,12 +93,37 @@ const FORMAT_FLAGS = new Map([
   ["--html", "html"]
 ]);
 
+const RESERVED_SUBCOMMANDS = new Set([
+  "help",
+  "example",
+  "install-hook",
+  "git",
+  "add",
+  "remove",
+  "del",
+  "bin",
+  "pop",
+  "pull",
+  "push",
+  "commit",
+  "merge",
+  "tag",
+  "log",
+  "status",
+  "pipeline"
+]);
+
 function printHelp() {
   console.log(`gitxplain - AI-powered Git change analysis, review, and commit workflow CLI
 
 Usage:
   gitxplain help
   gitxplain --help
+  gitxplain example
+  gitxplain --example
+  gitxplain git <native-git-args...>
+
+Git:
   gitxplain commit
   gitxplain --commit
   gitxplain merge
@@ -98,14 +134,22 @@ Usage:
   gitxplain --log
   gitxplain status
   gitxplain --status
+  gitxplain pipeline
   gitxplain add <path> [more-paths...]
   gitxplain remove <path> [more-paths...]
+  gitxplain remove hard
   gitxplain del <path> [more-paths...]
+  gitxplain bin
   gitxplain pop [stash-index]
+  gitxplain pull [remote] [branch]
   gitxplain push [remote] [branch]
   gitxplain install-hook [hook-name]
-  gitxplain --connect-git [token]
+
+GitHub:
+  gitxplain --connect-github [token]
   gitxplain --boot [options]
+
+Analysis:
   gitxplain <commit-id> [options]
   gitxplain <start>..<end> [options]
   gitxplain --branch [base-ref] [options]
@@ -118,7 +162,10 @@ What It Does:
   Merge release-version branch changes into a dedicated release branch
   Tag release-version commit windows on the current branch
   Inspect repository history and working tree status without calling the LLM
+  Inspect the current repository and scaffold GitHub Actions CI/CD workflows
   Run quick local actions to stage, unstage, delete files, pop stashes, or push
+  Pull from a remote or soft-reset the latest commit without leaving the CLI
+  Pass through any native Git command and flags when you need the full Git surface
 
 Modes:
   --summary    Generate a one-line summary of a change
@@ -135,14 +182,18 @@ Modes:
   --commit     Propose commits for current uncommitted changes
   --log        Print Git log entries for the current repository
   --status     Print Git working tree status for the current repository
+  pipeline     Detect the current repository stack and create CI/CD workflow files
   --execute    Execute a proposed split or commit plan
   --dry-run    Preview the plan without executing it (default for --split and --commit)
 
 Quick Actions:
   add         Stage one or more files with git add
   remove      Unstage one or more files with git restore --staged
+  remove hard Hard reset the repository to HEAD
   del         Delete one or more files from the working tree
+  bin         Soft reset HEAD~1 while keeping your changes
   pop         Pop a stash entry with a plain numeric index like "pop 2"
+  pull        Run git pull, optionally with a remote and branch
   push        Run git push, optionally with a remote and branch
 
 Output:
@@ -153,8 +204,10 @@ Output:
   --verbose    Print provider, model, cache, latency, and usage details
   --clipboard  Copy the final output to the system clipboard
   --stream     Stream model output as it is generated when supported
-  --boot       Launch an interactive chat session for dynamic querying, PR creation, and cloning.
-  --connect-git Save your GitHub Personal Access Token to act autonomously inside Chat.
+
+GitHub:
+  --connect-github Save your GitHub Personal Access Token to act autonomously inside Chat
+  --boot            Launch an interactive chat session for dynamic querying, PR creation, and cloning
 
 Providers:
   --provider   LLM provider: openai, groq, openrouter, gemini, ollama, chutes
@@ -166,33 +219,6 @@ Diff Budget:
 Comparison:
   --branch [base-ref]    Analyze the current branch against a base branch
   --pr [base-ref]        Alias for --branch, useful for PR-style comparisons
-
-Examples:
-  gitxplain HEAD~1 --full
-  gitxplain HEAD~1 --review
-  gitxplain HEAD~5..HEAD --markdown
-  gitxplain --branch main --review
-  gitxplain --pr origin/main --security --stream
-  gitxplain commit
-  gitxplain --commit --execute
-  gitxplain merge
-  gitxplain --merge --execute
-  gitxplain tag
-  gitxplain --tag --execute
-  gitxplain log
-  gitxplain --log
-  gitxplain status
-  gitxplain --status
-  gitxplain add README.md
-  gitxplain remove README.md
-  gitxplain del scratch.txt
-  gitxplain pop
-  gitxplain pop 2
-  gitxplain push
-  gitxplain push origin main
-  gitxplain HEAD~1 --split
-  gitxplain HEAD --split --execute
-  gitxplain HEAD~1 --provider chutes --model deepseek-ai/DeepSeek-V3-0324
 
 Provider Setup:
   OpenAI:
@@ -231,6 +257,46 @@ Notes:
   Run gitxplain inside a Git repository.
   If no mode is supplied, gitxplain will prompt you to choose one interactively.
   Use --provider or --model to override your config or environment for one command.
+  Use gitxplain git <args...> to run any native Git subcommand with its normal flags.
+`);
+}
+
+function printExamples() {
+  console.log(`gitxplain examples
+
+Examples:
+  gitxplain --connect-github <token>
+  gitxplain --boot
+  gitxplain HEAD~1 --full
+  gitxplain HEAD~1 --review
+  gitxplain HEAD~5..HEAD --markdown
+  gitxplain --branch main --review
+  gitxplain --pr origin/main --security --stream
+  gitxplain commit
+  gitxplain --commit --execute
+  gitxplain merge
+  gitxplain --merge --execute
+  gitxplain tag
+  gitxplain --tag --execute
+  gitxplain log
+  gitxplain --log
+  gitxplain status
+  gitxplain --status
+  gitxplain pipeline
+  gitxplain add README.md
+  gitxplain remove README.md
+  gitxplain remove hard
+  gitxplain del scratch.txt
+  gitxplain bin
+  gitxplain pop
+  gitxplain pop 2
+  gitxplain pull
+  gitxplain pull origin main
+  gitxplain push
+  gitxplain push origin main
+  gitxplain HEAD~1 --split
+  gitxplain HEAD --split --execute
+  gitxplain HEAD~1 --provider chutes --model deepseek-ai/DeepSeek-V3-0324
 `);
 }
 
@@ -262,9 +328,22 @@ function parseNumber(value, fallback = null) {
   return parsed;
 }
 
-export function parseArgs(argv) {
+function isDirectNativeGitSubcommand(subcommand, knownGitSubcommands) {
+  if (!subcommand || subcommand.startsWith("-")) {
+    return false;
+  }
+
+  if (RESERVED_SUBCOMMANDS.has(subcommand)) {
+    return false;
+  }
+
+  return knownGitSubcommands.has(subcommand);
+}
+
+export function parseArgs(argv, options = {}) {
   const args = argv.slice(2);
   const subcommand = args[0];
+  const knownGitSubcommands = options.gitSubcommands ?? listGitSubcommands();
   const flags = new Set(args.filter((arg) => arg.startsWith("--")));
   const valueFlags = new Set(["--provider", "--model", "--max-diff-lines", "--branch", "--pr"]);
   const positional = [];
@@ -292,7 +371,9 @@ export function parseArgs(argv) {
   const explicitMode = [...MODE_FLAGS.entries()].find(([flag]) => flags.has(flag))?.[1] ?? null;
   const explicitFormat = [...FORMAT_FLAGS.entries()].find(([flag]) => flags.has(flag))?.[1] ?? null;
   const isInstallHook = subcommand === "install-hook";
-  const isConnectGit = flags.has("--connect-git");
+  const isExample = flags.has("--example") || subcommand === "example";
+  const isNativeGitWrapper = subcommand === "git";
+  const isConnectGitHub = flags.has("--connect-github") || flags.has("--connect-git");
   const isBoot = flags.has("--boot");
   const isLogCommand = subcommand === "log";
   const isStatusCommand = subcommand === "status";
@@ -302,14 +383,21 @@ export function parseArgs(argv) {
   const isAddCommand = subcommand === "add";
   const isRemoveCommand = subcommand === "remove";
   const isDeleteCommand = subcommand === "del";
+  const isPipelineCommand = subcommand === "pipeline";
+  const isBinCommand = subcommand === "bin";
   const isPopCommand = subcommand === "pop";
+  const isPullCommand = subcommand === "pull";
   const isPushCommand = subcommand === "push";
+  const isRemoveHardCommand = isRemoveCommand && positional[1] === "hard" && positional.length === 2;
+  const isNativeGitCommand = isNativeGitWrapper || isDirectNativeGitSubcommand(subcommand, knownGitSubcommands);
 
   return {
     subcommand,
     help: flags.has("--help") || subcommand === "help",
+    example: isExample,
+    nativeGitCommand: isNativeGitCommand,
     installHook: isInstallHook,
-    connectGit: isConnectGit,
+    connectGitHub: isConnectGitHub,
     boot: isBoot,
     logCommand: isLogCommand,
     statusCommand: isStatusCommand,
@@ -319,17 +407,27 @@ export function parseArgs(argv) {
     addCommand: isAddCommand,
     removeCommand: isRemoveCommand,
     deleteCommand: isDeleteCommand,
+    pipelineCommand: isPipelineCommand,
+    binCommand: isBinCommand,
     popCommand: isPopCommand,
+    pullCommand: isPullCommand,
     pushCommand: isPushCommand,
+    removeHardCommand: isRemoveHardCommand,
+    nativeGitArgs: isNativeGitWrapper ? args.slice(1) : isNativeGitCommand ? args : [],
     hookName: isInstallHook ? positional[1] ?? "post-commit" : null,
-    actionPaths: isAddCommand || isRemoveCommand || isDeleteCommand ? positional.slice(1) : [],
-    connectToken: isConnectGit ? positional[0] : null,
+    actionPaths:
+      isAddCommand || isDeleteCommand ? positional.slice(1) : isRemoveHardCommand ? [] : isRemoveCommand ? positional.slice(1) : [],
+    connectToken: isConnectGitHub ? positional[0] : null,
     stashIndex: isPopCommand ? positional[1] ?? null : null,
+    pullRemote: isPullCommand ? positional[1] ?? null : null,
+    pullBranch: isPullCommand ? positional[2] ?? null : null,
     pushRemote: isPushCommand ? positional[1] ?? null : null,
     pushBranch: isPushCommand ? positional[2] ?? null : null,
     commitRef:
       isInstallHook ||
-      isConnectGit ||
+      isExample ||
+      isNativeGitCommand ||
+      isConnectGitHub ||
       isBoot ||
       isLogCommand ||
       isStatusCommand ||
@@ -339,7 +437,10 @@ export function parseArgs(argv) {
       isAddCommand ||
       isRemoveCommand ||
       isDeleteCommand ||
+      isPipelineCommand ||
+      isBinCommand ||
       isPopCommand ||
+      isPullCommand ||
       isPushCommand ||
       subcommand === "help"
         ? null
@@ -395,6 +496,7 @@ async function chooseModeInteractively() {
       "11. Tag Release Commits",
       "12. Repository Log",
       "13. Commit Working Tree",
+      "14. Create CI/CD Pipelines",
       "> "
     ].join("\n")
   );
@@ -412,7 +514,8 @@ async function chooseModeInteractively() {
     "10": "merge",
     "11": "tag",
     "12": "log",
-    "13": "commit"
+    "13": "commit",
+    "14": "pipeline"
   };
 
   return selections[answer] ?? "full";
@@ -445,6 +548,15 @@ function resolveTargetRef(parsed, cwd) {
   return null;
 }
 
+export function buildBootSessionArgs(connection, userInfo, parsed) {
+  return {
+    token: connection.token,
+    providerOverride: parsed.provider,
+    modelOverride: parsed.model,
+    username: userInfo.name || connection.user?.login || null
+  };
+}
+
 function renderFinalOutput({ runtimeOptions, mode, commitData, explanation, responseMeta, promptMeta }) {
   if (runtimeOptions.format === "json") {
     return formatJsonOutput({ mode, commitData, explanation, responseMeta, promptMeta });
@@ -472,12 +584,22 @@ export async function main(argv = process.argv) {
   const cwd = process.cwd();
   const config = loadConfig(cwd);
   const parsed = parseArgs(argv);
+  const hasNoCommandOrFlags = argv.slice(2).length === 0;
 
   loadEnvFile(cwd); // Ensure environment is loaded first
 
-  if (parsed.help) {
+  if (parsed.help || hasNoCommandOrFlags) {
     printHelp();
     return 0;
+  }
+
+  if (parsed.example) {
+    printExamples();
+    return 0;
+  }
+
+  if (parsed.nativeGitCommand) {
+    return runNativeGitPassthrough(parsed.nativeGitArgs, cwd);
   }
 
   if (!isGitRepository(cwd)) {
@@ -491,13 +613,13 @@ export async function main(argv = process.argv) {
     return 0;
   }
 
-  if (parsed.connectGit) {
+  if (parsed.connectGitHub) {
     let token = parsed.connectToken;
     if (!token) {
       if (process.env.GITHUB_TOKEN) {
         token = process.env.GITHUB_TOKEN;
       } else {
-        console.error("Please provide your GitHub Personal Access Token.\nRun: gitxplain --connect-git <YOUR_TOKEN>\nOr set it in your .env as GITHUB_TOKEN=...");
+        console.error("Please provide your GitHub Personal Access Token.\nRun: gitxplain --connect-github <YOUR_TOKEN>\nOr set it in your .env as GITHUB_TOKEN=...");
         return 1;
       }
     }
@@ -516,7 +638,7 @@ export async function main(argv = process.argv) {
 
   if (parsed.boot) {
     if (!isGitConnected()) {
-      console.error("You must connect a GitHub account first to use the interactive agent.\nCommand: gitxplain --connect-git <YOUR_TOKEN>");
+      console.error("You must connect a GitHub account first to use the interactive agent.\nCommand: gitxplain --connect-github <YOUR_TOKEN>");
       return 1;
     }
     const connection = loadGitConnection();
@@ -527,7 +649,13 @@ export async function main(argv = process.argv) {
       );
       const config = getProviderConfig(parsed.provider, parsed.model);
       validateProviderConfig(config);
-      await startChatSession(connection.token, parsed.provider, parsed.model, userInfo.name || connection.user?.login);
+      const sessionArgs = buildBootSessionArgs(connection, userInfo, parsed);
+      await startChatSession(
+        sessionArgs.token,
+        sessionArgs.providerOverride,
+        sessionArgs.modelOverride,
+        sessionArgs.username
+      );
     } catch (configError) {
       console.error(`Missing LLM Key. Please check your .env variables or --provider flags.\n${configError.message}`);
       return 1;
@@ -545,8 +673,46 @@ export async function main(argv = process.argv) {
     return 0;
   }
 
-  if (parsed.addCommand || parsed.removeCommand || parsed.deleteCommand || parsed.popCommand || parsed.pushCommand) {
-    if (!parsed.popCommand && parsed.actionPaths.length === 0) {
+  if (parsed.pipelineCommand) {
+    const analysis = inspectRepositoryForPipeline(cwd);
+
+    if (!analysis.supported) {
+      console.log(analysis.reason);
+      return 1;
+    }
+
+    console.log(formatPipelineRecommendations(analysis));
+
+    const answer = await askQuestion(
+      `\nChoose a pipeline option (1-${analysis.options.length}) or type "cancel" > `
+    );
+    const selection = resolvePipelineSelection(analysis, answer);
+
+    if (!selection) {
+      console.log("Aborted.");
+      return 0;
+    }
+
+    const { writtenFiles, notes } = writePipelineFiles(cwd, analysis, selection);
+    console.log(`\nCreated workflow files: ${writtenFiles.join(", ")}`);
+
+    if (notes.length > 0) {
+      console.log(`\n${notes.join("\n")}`);
+    }
+
+    return 0;
+  }
+
+  if (
+    parsed.addCommand ||
+    parsed.removeCommand ||
+    parsed.deleteCommand ||
+    parsed.binCommand ||
+    parsed.popCommand ||
+    parsed.pullCommand ||
+    parsed.pushCommand
+  ) {
+    if (!parsed.popCommand && !parsed.binCommand && !parsed.pullCommand && !parsed.removeHardCommand && parsed.actionPaths.length === 0) {
       if (!parsed.pushCommand) {
         throw new Error(`No paths provided for "${parsed.subcommand}".`);
       }
@@ -559,6 +725,12 @@ export async function main(argv = process.argv) {
     }
 
     if (parsed.removeCommand) {
+      if (parsed.removeHardCommand) {
+        gitResetHard("HEAD", cwd);
+        console.log("Hard reset to HEAD.");
+        return 0;
+      }
+
       gitRestoreStaged(parsed.actionPaths, cwd);
       console.log(`Unstaged ${parsed.actionPaths.join(", ")}.`);
       return 0;
@@ -570,10 +742,24 @@ export async function main(argv = process.argv) {
       return 0;
     }
 
+    if (parsed.binCommand) {
+      gitResetSoft(cwd);
+      console.log("Soft reset HEAD~1 and kept your changes.");
+      return 0;
+    }
+
     if (parsed.popCommand) {
       const stashRef = resolveStashRef(parsed.stashIndex);
       gitStashPop(parsed.stashIndex, cwd);
       console.log(`Popped ${stashRef}.`);
+      return 0;
+    }
+
+    if (parsed.pullCommand) {
+      gitPull(cwd, parsed.pullRemote, parsed.pullBranch);
+      console.log(
+        `Pulled${parsed.pullRemote ? ` from ${parsed.pullRemote}` : ""}${parsed.pullBranch ? ` ${parsed.pullBranch}` : ""}.`
+      );
       return 0;
     }
 
@@ -586,6 +772,36 @@ export async function main(argv = process.argv) {
 
   const runtimeOptions = resolveRuntimeOptions(parsed, config);
   const mode = parsed.mode ?? config.mode ?? (await chooseModeInteractively());
+
+  if (mode === "pipeline") {
+    const analysis = inspectRepositoryForPipeline(cwd);
+
+    if (!analysis.supported) {
+      console.log(analysis.reason);
+      return 1;
+    }
+
+    console.log(formatPipelineRecommendations(analysis));
+
+    const answer = await askQuestion(
+      `\nChoose a pipeline option (1-${analysis.options.length}) or type "cancel" > `
+    );
+    const selection = resolvePipelineSelection(analysis, answer);
+
+    if (!selection) {
+      console.log("Aborted.");
+      return 0;
+    }
+
+    const { writtenFiles, notes } = writePipelineFiles(cwd, analysis, selection);
+    console.log(`\nCreated workflow files: ${writtenFiles.join(", ")}`);
+
+    if (notes.length > 0) {
+      console.log(`\n${notes.join("\n")}`);
+    }
+
+    return 0;
+  }
 
   if (mode === "commit" || parsed.commitCommand) {
     const commitData = fetchWorkingTreeData(cwd);
