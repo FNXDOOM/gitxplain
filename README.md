@@ -20,6 +20,7 @@ Supported providers:
 - Supports automatic release tagging driven by the same version-bump detection used for release merges
 - Supports AI-assisted commit planning for uncommitted working tree changes
 - Supports quick repository log output for full history inspection
+- Supports repository-aware CI/CD workflow generation for the repo you are currently in
 - Supports single commits, commit ranges, and branch-vs-base comparisons
 - Truncates oversized diffs before sending them to the model and reports that truncation
 - Streams output for supported providers
@@ -65,6 +66,8 @@ cp .env.example .env
 
 ```bash
 gitxplain help
+gitxplain branch -a
+gitxplain checkout -b feature/demo
 gitxplain commit
 gitxplain --commit
 gitxplain merge
@@ -76,11 +79,16 @@ gitxplore --tag
 gitxplain log --log
 gitxplain status
 gitxplain --status
+gitxplain pipeline
 gitxplain add README.md
 gitxplain remove README.md
+gitxplain remove hard
 gitxplain del scratch.txt
+gitxplain bin
 gitxplain pop
 gitxplain pop 2
+gitxplain pull
+gitxplain pull origin main
 gitxplain push
 gitxplain push origin main
 gitxplain <commit-id>
@@ -146,12 +154,24 @@ Then from any Git repository:
 
 ```bash
 gitxplain help
+gitxplain --connect-github <token>
+gitxplain --boot
 gitxplain HEAD~1 --full
 gitxplain a1b2c3d --summary
 gitxplain HEAD~1 --lines
 gitxplain HEAD~5..HEAD --markdown
 gitxplain --branch main --review
 ```
+
+Inside `gitxplain --boot`, the session now prints the available interactive commands on startup. You can also type `help` at any time to re-display:
+
+- `help`
+- `repos`
+- `issues`
+- `status`
+- `download`
+- `clear`
+- `exit`
 
 The `gitxplain help` command also prints quick API-key setup examples for:
 
@@ -184,6 +204,7 @@ node /home/guru/Dev/gitxplain/cli/index.js HEAD~1 --full
 - `--commit`: propose commits for current uncommitted changes
 - `--log`: print Git log entries for the current repository
 - `--status`: print Git working tree status for the current repository
+- `pipeline`: inspect the current repository and generate GitHub Actions CI/CD workflows
 - `--execute`: apply a proposed split by rewriting history
 - `--dry-run`: preview the split or commit plan without applying it
 - `--json`: return structured JSON instead of formatted text
@@ -211,11 +232,32 @@ Run a few common Git actions directly through `gitxplain`:
 gitxplain status
 gitxplain add README.md
 gitxplain remove README.md
+gitxplain remove hard
 gitxplain del scratch.txt
+gitxplain bin
 gitxplain pop
 gitxplain pop 2
+gitxplain pull
+gitxplain pull origin main
 gitxplain push
 gitxplain push origin main
+```
+
+For native Git commands that do not have a custom `gitxplain` workflow, use them directly:
+
+```bash
+gitxplain branch -a
+gitxplain checkout -b feature/demo
+gitxplain rebase origin/main
+gitxplain worktree list
+```
+
+If you want to force native Git for a reserved custom command name, use the `git` wrapper:
+
+```bash
+gitxplain git commit -m "native commit message"
+gitxplain git merge feature/demo
+gitxplain git tag -a v1.2.3 -m "release"
 ```
 
 ## Comparison Modes
