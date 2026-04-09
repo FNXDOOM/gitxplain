@@ -17,6 +17,19 @@ const COLORS = {
   red: "\x1b[31m"
 };
 
+export function getBootHelpText() {
+  return [
+    "Available commands:",
+    "  help      Show this command list",
+    "  repos     Select a GitHub repository and commit for analysis",
+    "  issues    Summarize open issues for the selected repository",
+    "  status    Review local uncommitted git diff",
+    "  download  Download the selected repository at the selected commit",
+    "  clear     Reset the current chat history",
+    "  exit      Close the interactive session"
+  ].join("\n");
+}
+
 export class ChatService {
   constructor(token, providerOverride, modelOverride, username) {
     this.token = token;
@@ -220,25 +233,32 @@ Analysis:
       });
     };
 
-    console.log(`${COLORS.bold}${COLORS.cyan}GitHub Chat - Type 'repos' to select a repo, 'download' to clone the selected commit state, 'exit' to quit, 'clear' to reset history\n${COLORS.reset}`);
+    console.log(`${COLORS.bold}${COLORS.cyan}GitHub Chat${COLORS.reset}`);
+    console.log(`${COLORS.cyan}${getBootHelpText()}\n${COLORS.reset}`);
     console.log(`${COLORS.cyan}Model: ${this.config.model} (${this.config.provider})\n${COLORS.reset}`);
 
     while (true) {
       const userInput = await question("You: ");
+      const normalizedInput = userInput.trim().toLowerCase();
 
-      if (userInput.toLowerCase() === "exit") {
+      if (normalizedInput === "help") {
+        console.log(`\n${COLORS.cyan}${getBootHelpText()}\n${COLORS.reset}`);
+        continue;
+      }
+
+      if (normalizedInput === "exit") {
         console.log(`${COLORS.green}Goodbye!${COLORS.reset}`);
         rl.close();
         break;
       }
 
-      if (userInput.toLowerCase() === "clear") {
+      if (normalizedInput === "clear") {
         this.conversationHistory = [];
         console.log(`${COLORS.yellow}Conversation history cleared.\n${COLORS.reset}`);
         continue;
       }
 
-      if (userInput.toLowerCase() === "download") {
+      if (normalizedInput === "download") {
         if (!this.activeRepo || !this.activeCommit) {
           console.log(`${COLORS.yellow}No repository/commit selected. Please type 'repos' first.\n${COLORS.reset}`);
           continue;
@@ -257,7 +277,7 @@ Analysis:
         continue;
       }
 
-      if (userInput.toLowerCase() === "repos") {
+      if (normalizedInput === "repos") {
         const selectedRepo = await this.showRepoSelector();
         if (selectedRepo) {
           this.activeRepo = selectedRepo;
@@ -302,7 +322,7 @@ Please acknowledge this selection in a maximum of 3 sentences, giving a brief su
         continue;
       }
       
-      if (userInput.toLowerCase() === "status") {
+      if (normalizedInput === "status") {
         try {
           const diff = execSync("git diff").toString();
           if (!diff) {
@@ -319,7 +339,7 @@ Please acknowledge this selection in a maximum of 3 sentences, giving a brief su
         continue;
       }
       
-      if (userInput.toLowerCase() === "issues") {
+      if (normalizedInput === "issues") {
         if (!this.activeRepo) {
           console.log(`${COLORS.yellow}No active repository. Please type 'repos' first.\n${COLORS.reset}`);
           continue;
@@ -656,7 +676,7 @@ Please acknowledge this selection in a maximum of 3 sentences, giving a brief su
   }
 }
 
-export async function startChatSession(token, username, providerOverride, modelOverride) {
+export async function startChatSession(token, providerOverride, modelOverride, username) {
   const chatService = new ChatService(token, providerOverride, modelOverride, username);
   await chatService.initializeRepoContext();
   await chatService.startInteractiveChat();

@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import os from "node:os";
 import { mkdtempSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -85,6 +85,33 @@ export function runGitCommandUnchecked(args, cwd) {
       exitCode: error.status ?? 1
     };
   }
+}
+
+export function listGitSubcommands() {
+  const output = execFileSync("git", ["help", "-a"], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+
+  return new Set(
+    output
+      .split("\n")
+      .map((line) => line.match(/^\s{3}([a-z0-9][a-z0-9-]*)\s{2,}/i)?.[1] ?? null)
+      .filter(Boolean)
+  );
+}
+
+export function runNativeGitPassthrough(args, cwd) {
+  const result = spawnSync("git", args, {
+    cwd,
+    stdio: "inherit"
+  });
+
+  if (result.error) {
+    throw result.error;
+  }
+
+  return result.status ?? 0;
 }
 
 export function isGitRepository(cwd) {
@@ -230,6 +257,21 @@ export function gitPush(cwd, remote = null, branch = null, runner = runGitComman
 
   return runner(args, cwd);
 }
+
+export function gitPull(cwd, remote = null, branch = null, runner = runGitCommand) {
+  const args = ["pull"];
+
+  if (remote) {
+    args.push(remote);
+  }
+
+  if (branch) {
+    args.push(branch);
+  }
+
+  return runner(args, cwd);
+}
+
 
 export function gitCreateAnnotatedTag(tagName, ref, message, cwd) {
   return runGitCommand(["tag", "-a", tagName, ref, "-m", message], cwd);
@@ -438,8 +480,8 @@ export function isAncestorCommit(ancestorRef, descendantRef, cwd) {
   throw new Error(result.stderr || "Unable to determine commit ancestry.");
 }
 
-export function gitResetHard(ref, cwd) {
-  return runGitCommand(["reset", "--hard", ref], cwd);
+export function gitResetHard(ref, cwd, runner = runGitCommand) {
+  return runner(["reset", "--hard", ref], cwd);
 }
 
 export function gitCherryPickNoCommit(ref, cwd) {

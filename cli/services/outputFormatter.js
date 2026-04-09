@@ -138,18 +138,6 @@ function classifyTone(line) {
 }
 
 function colorizeByTone(line, tone) {
-  if (tone === "good") {
-    return colorize(line, ANSI.green);
-  }
-
-  if (tone === "bad") {
-    return colorize(line, ANSI.red);
-  }
-
-  if (tone === "neutral") {
-    return colorize(line, ANSI.yellow);
-  }
-
   return line;
 }
 
@@ -161,17 +149,7 @@ function formatBulletLine(line) {
   }
 
   const [, indent, marker, content] = match;
-  const tone = classifyTone(content);
-  const coloredMarker =
-    tone === "good"
-      ? colorize(marker, ANSI.green)
-      : tone === "bad"
-        ? colorize(marker, ANSI.red)
-        : tone === "neutral"
-          ? colorize(marker, ANSI.yellow)
-          : colorize(marker, ANSI.cyan);
-
-  return `${indent}${coloredMarker} ${colorizeByTone(content, tone)}`;
+  return `${indent}${colorize(marker, ANSI.cyan)} ${content}`;
 }
 
 function formatSeverityLine(line) {
@@ -179,19 +157,7 @@ function formatSeverityLine(line) {
     return null;
   }
 
-  if (/\blow\b/i.test(line)) {
-    return colorize(line, ANSI.green);
-  }
-
-  if (/\bmedium\b/i.test(line)) {
-    return colorize(line, ANSI.yellow);
-  }
-
-  if (/\bhigh\b/i.test(line)) {
-    return colorize(line, ANSI.red);
-  }
-
-  return colorize(line, ANSI.bold + ANSI.yellow);
+  return line;
 }
 
 function formatLine(line) {
