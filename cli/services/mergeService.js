@@ -342,6 +342,37 @@ export function selectReleaseTags(sourceCommits, existingTagNames = []) {
   };
 }
 
+export function selectReleaseTagsFromReleaseCommits(releaseCommits, existingTagNames = []) {
+  const taggedVersions = extractTaggedVersions(existingTagNames);
+  const tags = releaseCommits
+    .map((commit) => ({
+      commit,
+      version: commit.subject.match(RELEASE_SUBJECT_PATTERN)?.[1]?.trim() ?? null
+    }))
+    .filter((entry) => entry.version)
+    .filter((entry) => !taggedVersions.has(entry.version))
+    .map(({ commit, version }) => ({
+      version,
+      tagName: version,
+      startRef: commit.shortSha,
+      endRef: commit.shortSha,
+      targetSha: commit.sha,
+      targetShortSha: commit.shortSha,
+      targetSubject: commit.subject,
+      commits: [commit]
+    }));
+
+  return {
+    tags,
+    taggedVersions: [...taggedVersions],
+    latestDetectedVersion:
+      releaseCommits
+        .map((commit) => commit.subject.match(RELEASE_SUBJECT_PATTERN)?.[1]?.trim() ?? null)
+        .filter(Boolean)
+        .at(-1) ?? null
+  };
+}
+
 function getReleaseTrackSourceCommitShas(releaseExists, baseRef, cwd) {
   if (!releaseExists) {
     return {
@@ -399,8 +430,13 @@ export function buildReleaseTagPlan(cwd) {
   const releaseExists = localBranchExists(RELEASE_BRANCH, cwd);
   const baseRef = releaseExists ? RELEASE_BRANCH : getDefaultBaseRef(cwd);
   const { mergeBase, sourceCommitShas } = getReleaseTrackSourceCommitShas(releaseExists, baseRef, cwd);
-  const sourceCommits = sourceCommitShas.map((sha) => inspectCommit(sha, cwd));
-  const selection = selectReleaseTags(sourceCommits, listTags(cwd));
+  const existingTagNames = listTags(cwd);
+  const selection = releaseExists
+    ? selectReleaseTagsFromReleaseCommits(
+        listBranchCommits(RELEASE_BRANCH, cwd).map((sha) => inspectCommit(sha, cwd)),
+        existingTagNames
+      )
+    : selectReleaseTags(sourceCommits.map((sha) => inspectCommit(sha, cwd)), existingTagNames);
 
   return {
     sourceBranch,
