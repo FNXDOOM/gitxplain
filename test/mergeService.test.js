@@ -203,7 +203,7 @@ test("selectReleaseWindows returns all windows when no versions were released ye
   assert.deepEqual(selection.windows.map((window) => window.version), ["0.1.1", "0.1.2"]);
 });
 
-test("selectReleaseWindows picks only the latest unreleased version when some exist already", () => {
+test("selectReleaseWindows keeps all unreleased versions in order when some exist already", () => {
   const sourceCommits = [
     {
       shortSha: "1111111",
@@ -246,8 +246,8 @@ test("selectReleaseWindows picks only the latest unreleased version when some ex
   const releaseCommits = [{ subject: "release 0.1.1", releaseVersion: null }];
   const selection = selectReleaseWindows(sourceCommits, releaseCommits);
 
-  assert.equal(selection.windows.length, 1);
-  assert.equal(selection.windows[0].version, "0.1.3");
+  assert.equal(selection.windows.length, 2);
+  assert.deepEqual(selection.windows.map((window) => window.version), ["0.1.2", "0.1.3"]);
 });
 
 test("selectReleaseTags maps each unreleased version to the release window end commit", () => {
@@ -403,6 +403,53 @@ test("executeReleaseMerge creates an orphan release branch without an initializa
     }
 
     assert.equal(hasMergeBase, false);
+  } finally {
+    rmSync(repoDir, { recursive: true, force: true });
+  }
+});
+
+test("executeReleaseMerge applies every unreleased window onto an existing release branch", () => {
+  const repoDir = mkdtempSync(path.join(os.tmpdir(), "gitxplain-release-existing-"));
+  const runGit = (...args) =>
+    execFileSync("git", args, {
+      cwd: repoDir,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"]
+    }).trim();
+
+  try {
+    runGit("init", "-b", "main");
+    runGit("config", "user.name", "Test User");
+    runGit("config", "user.email", "test@example.com");
+
+    writeFileSync(path.join(repoDir, "package.json"), `${JSON.stringify({ name: "gitxplain", version: "0.1.0" }, null, 2)}\n`);
+    runGit("add", "package.json");
+    runGit("commit", "-m", "chore: scaffold app");
+
+    writeFileSync(path.join(repoDir, "package.json"), `${JSON.stringify({ name: "gitxplain", version: "0.1.1" }, null, 2)}\n`);
+    runGit("commit", "-am", "chore: bump version to 0.1.1");
+
+    let plan = finalizeReleaseMergePlan(buildReleaseMergePlan(repoDir));
+    executeReleaseMerge(plan, repoDir);
+    runGit("checkout", "main");
+
+    writeFileSync(path.join(repoDir, "package.json"), `${JSON.stringify({ name: "gitxplain", version: "0.1.2" }, null, 2)}\n`);
+    runGit("commit", "-am", "chore: bump version to 0.1.2");
+
+    writeFileSync(path.join(repoDir, "package.json"), `${JSON.stringify({ name: "gitxplain", version: "0.1.3" }, null, 2)}\n`);
+    runGit("commit", "-am", "chore: bump version to 0.1.3");
+
+    plan = finalizeReleaseMergePlan(buildReleaseMergePlan(repoDir));
+
+    assert.deepEqual(plan.windows.map((window) => window.version), ["0.1.2", "0.1.3"]);
+
+    executeReleaseMerge(plan, repoDir);
+
+    const releaseSubjects = runGit("log", "--format=%s", "release")
+      .split("\n")
+      .filter(Boolean);
+
+    assert.deepEqual(releaseSubjects, ["release 0.1.3", "release 0.1.2", "release 0.1.1", "release 0.1.0"]);
   } finally {
     rmSync(repoDir, { recursive: true, force: true });
   }

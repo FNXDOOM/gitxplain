@@ -315,15 +315,8 @@ export function selectReleaseWindows(sourceCommits, releaseCommits = []) {
   const releasedVersions = getReleasedVersions(releaseCommits);
   const unreleasedWindows = windows.filter((window) => !releasedVersions.has(window.version));
 
-  const selectedWindows =
-    releasedVersions.size === 0
-      ? unreleasedWindows
-      : unreleasedWindows.length > 0
-        ? [unreleasedWindows.at(-1)]
-        : [];
-
   return {
-    windows: selectedWindows,
+    windows: unreleasedWindows,
     releasedVersions: [...releasedVersions],
     latestDetectedVersion: windows.at(-1)?.version ?? null
   };
