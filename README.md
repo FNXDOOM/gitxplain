@@ -165,15 +165,6 @@ gitxplain HEAD~5..HEAD --markdown
 gitxplain --branch main --review
 ```
 
-The `gitxplain help` command also prints quick API-key setup examples for:
-
-- OpenAI
-- Groq
-- OpenRouter
-- Gemini
-- Ollama
-- Chutes AI
-
 If you do not want to link it globally, you can still run it locally:
 
 ```bash
