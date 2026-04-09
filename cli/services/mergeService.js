@@ -342,6 +342,31 @@ export function selectReleaseTags(sourceCommits, existingTagNames = []) {
   };
 }
 
+function findLatestTaggedSourceVersion(sourceCommits, taggedVersions) {
+  const tagged = new Set(taggedVersions);
+  return buildReleaseWindows(sourceCommits)
+    .map((window) => window.version)
+    .filter((version) => version && tagged.has(version))
+    .at(-1) ?? null;
+}
+
+function buildReleaseTagPlanForSource(sourceBranch, sourceRef, cwd) {
+  const sourceCommits = listBranchCommits(sourceRef, cwd).map((sha) => inspectCommit(sha, cwd));
+  const existingTagNames = listTags(cwd);
+  const selection = selectReleaseTags(sourceCommits, existingTagNames);
+
+  return {
+    sourceBranch,
+    baseRef: sourceRef,
+    mergeBase: null,
+    releaseExists: localBranchExists(RELEASE_BRANCH, cwd),
+    taggedVersions: selection.taggedVersions,
+    latestDetectedVersion: selection.latestDetectedVersion,
+    latestTaggedVersion: findLatestTaggedSourceVersion(sourceCommits, selection.taggedVersions),
+    tags: selection.tags
+  };
+}
+
 export function selectReleaseTagsFromReleaseCommits(releaseCommits, existingTagNames = []) {
   const taggedVersions = extractTaggedVersions(existingTagNames);
   const tags = releaseCommits
@@ -431,26 +456,7 @@ export function buildReleaseTagPlan(cwd) {
     throw new Error(`Already on "${RELEASE_BRANCH}". Switch to a source branch before running --tag.`);
   }
 
-  const releaseExists = localBranchExists(RELEASE_BRANCH, cwd);
-  const baseRef = releaseExists ? RELEASE_BRANCH : getDefaultBaseRef(cwd);
-  const { mergeBase, sourceCommitShas } = getReleaseTrackSourceCommitShas(releaseExists, baseRef, "HEAD", cwd);
-  const existingTagNames = listTags(cwd);
-  const selection = releaseExists
-    ? selectReleaseTagsFromReleaseCommits(
-        listBranchCommits(RELEASE_BRANCH, cwd).map((sha) => inspectCommit(sha, cwd)),
-        existingTagNames
-      )
-    : selectReleaseTags(sourceCommits.map((sha) => inspectCommit(sha, cwd)), existingTagNames);
-
-  return {
-    sourceBranch,
-    baseRef,
-    mergeBase,
-    releaseExists,
-    taggedVersions: selection.taggedVersions,
-    latestDetectedVersion: selection.latestDetectedVersion,
-    tags: selection.tags
-  };
+  return buildReleaseTagPlanForSource(sourceBranch, "HEAD", cwd);
 }
 
 export function finalizeReleaseMergePlan(plan) {
@@ -526,12 +532,16 @@ function getNextRecommendedAction({ releaseExists, mergePlan, missingTagCount })
     return `Run \`gitxplain merge --execute\` to create ${RELEASE_BRANCH} and promote ${mergePlan.windows.length} unreleased version(s).`;
   }
 
+  if (!releaseExists && missingTagCount > 0) {
+    return `Run \`gitxplain tag --execute\` to create ${missingTagCount} missing version tag(s) on the current branch.`;
+  }
+
   if (!releaseExists) {
     return `No ${RELEASE_BRANCH} branch exists yet, and no releasable version bumps were detected.`;
   }
 
   if (mergePlan.windows.length > 0 && missingTagCount > 0) {
-    return `Run \`gitxplain merge --execute\` first, then \`gitxplain tag --execute\` to finish tagging release commits.`;
+    return `Run \`gitxplain merge --execute\` to update ${RELEASE_BRANCH}, and \`gitxplain tag --execute\` to create ${missingTagCount} missing version tag(s).`;
   }
 
   if (mergePlan.windows.length > 0) {
@@ -539,7 +549,7 @@ function getNextRecommendedAction({ releaseExists, mergePlan, missingTagCount })
   }
 
   if (missingTagCount > 0) {
-    return `Run \`gitxplain tag --execute\` to create ${missingTagCount} missing release tag(s).`;
+    return `Run \`gitxplain tag --execute\` to create ${missingTagCount} missing version tag(s).`;
   }
 
   return "No action required. Release branch and tags are up to date.";
@@ -552,11 +562,9 @@ export function buildReleaseStatus(cwd) {
   const sourceRef = currentBranch === RELEASE_BRANCH ? sourceBranch : "HEAD";
   const mergePlan = finalizeReleaseMergePlan(buildReleaseMergePlanForSource(sourceBranch, sourceRef, cwd));
   const releaseCommits = releaseExists ? listBranchCommits(RELEASE_BRANCH, cwd).map((sha) => inspectCommit(sha, cwd)) : [];
-  const tagSelection = releaseExists
-    ? selectReleaseTagsFromReleaseCommits(releaseCommits, listTags(cwd))
-    : { tags: [], taggedVersions: [], latestDetectedVersion: null };
+  const tagPlan = finalizeReleaseTagPlan(buildReleaseTagPlanForSource(sourceBranch, sourceRef, cwd));
   const drift = buildDriftStatus(sourceRef, sourceBranch, releaseExists, cwd);
-  const missingTagVersions = tagSelection.tags.map((tag) => tag.tagName);
+  const missingTagVersions = tagPlan.tags.map((tag) => tag.tagName);
   const unmergedVersions = mergePlan.windows.map((window) => window.version);
 
   return {
@@ -571,20 +579,12 @@ export function buildReleaseStatus(cwd) {
         : "healthy",
     latestSourceVersion: mergePlan.latestDetectedVersion,
     latestReleaseVersion: findLatestReleaseVersion(releaseCommits),
-    latestTaggedVersion: findLatestTaggedReleaseVersion(releaseCommits, tagSelection.taggedVersions),
+    latestTaggedVersion: tagPlan.latestTaggedVersion,
     unmergedVersions,
     missingTagVersions,
     drift,
     mergePlan,
-    tagPlan: finalizeReleaseTagPlan({
-      sourceBranch,
-      baseRef: mergePlan.baseRef,
-      mergeBase: mergePlan.mergeBase,
-      releaseExists,
-      taggedVersions: tagSelection.taggedVersions,
-      latestDetectedVersion: tagSelection.latestDetectedVersion,
-      tags: tagSelection.tags
-    }),
+    tagPlan,
     nextRecommendedAction: getNextRecommendedAction({
       releaseExists,
       mergePlan,
