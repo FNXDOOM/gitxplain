@@ -173,6 +173,73 @@ function detectRustProject(cwd) {
   };
 }
 
+function detectGradleProject(cwd) {
+  const hasGradleWrapper = fileExists(cwd, "gradlew");
+  const settingsFiles = ["settings.gradle.kts", "settings.gradle"];
+  const rootBuildFiles = ["build.gradle.kts", "build.gradle"];
+  const appBuildFiles = [
+    "app/build.gradle.kts",
+    "app/build.gradle",
+    "android/app/build.gradle.kts",
+    "android/app/build.gradle"
+  ];
+
+  const hasSettings = settingsFiles.some((filePath) => fileExists(cwd, filePath));
+  const hasRootBuild = rootBuildFiles.some((filePath) => fileExists(cwd, filePath));
+
+  if (!hasGradleWrapper && !hasSettings && !hasRootBuild) {
+    return null;
+  }
+
+  const appBuildPath = appBuildFiles.find((filePath) => fileExists(cwd, filePath)) ?? null;
+  const appBuildContent = appBuildPath ? readFileSync(path.join(cwd, appBuildPath), "utf8") : "";
+  const isAndroidApp =
+    appBuildContent.includes("com.android.application") ||
+    appBuildContent.includes("libs.plugins.android.application") ||
+    appBuildContent.includes("android {");
+
+  const gradleCommand = hasGradleWrapper ? "./gradlew" : "gradle";
+  const displayName = path.basename(cwd);
+
+  if (isAndroidApp) {
+    const appModule = appBuildPath?.startsWith("android/") ? ":android:app" : ":app";
+
+    return {
+      type: "gradle-android",
+      displayName,
+      commands: {
+        install: null,
+        lint: `${gradleCommand} ${appModule}:lintDebug`,
+        test: `${gradleCommand} ${appModule}:testDebugUnitTest`,
+        build: `${gradleCommand} ${appModule}:assembleDebug`,
+        pack: null
+      },
+      release: {
+        supported: false,
+        type: null,
+        packageName: null
+      }
+    };
+  }
+
+  return {
+    type: "gradle",
+    displayName,
+    commands: {
+      install: null,
+      lint: null,
+      test: `${gradleCommand} test`,
+      build: `${gradleCommand} build`,
+      pack: null
+    },
+    release: {
+      supported: false,
+      type: null,
+      packageName: null
+    }
+  };
+}
+
 function detectDockerSupport(cwd) {
   return fileExists(cwd, "Dockerfile");
 }
@@ -263,6 +330,20 @@ function buildInstallStep(context) {
     ].join("\n");
   }
 
+  if (context.type === "gradle" || context.type === "gradle-android") {
+    return [
+      "      - name: Setup Java",
+      "        uses: actions/setup-java@v4",
+      "        with:",
+      "          distribution: temurin",
+      "          java-version: '17'",
+      "      - name: Setup Gradle",
+      "        uses: gradle/actions/setup-gradle@v4",
+      "      - name: Make Gradle wrapper executable",
+      "        run: chmod +x gradlew"
+    ].join("\n");
+  }
+
   return formatRunStep("Install dependencies", context.commands.install);
 }
 
@@ -315,12 +396,13 @@ export function inspectRepositoryForPipeline(cwd) {
   const python = detectPythonProject(cwd);
   const go = detectGoProject(cwd);
   const rust = detectRustProject(cwd);
-  const primary = node ?? python ?? go ?? rust;
+  const gradle = detectGradleProject(cwd);
+  const primary = node ?? python ?? go ?? rust ?? gradle;
 
   if (!primary) {
     return {
       supported: false,
-      reason: "No supported Node, Python, Go, or Rust project files were detected.",
+      reason: "No supported Node, Python, Go, Rust, or Gradle project files were detected.",
       existingWorkflows: listExistingWorkflows(cwd),
       options: []
     };
@@ -378,6 +460,16 @@ export function formatPipelineRecommendations(analysis) {
 
   if (analysis.primary.type === "node") {
     lines.push(`Package manager: ${analysis.primary.packageManager}`);
+    if (analysis.primary.commands.lint) {
+      lines.push(`Lint command: ${analysis.primary.commands.lint}`);
+    }
+    if (analysis.primary.commands.test) {
+      lines.push(`Test command: ${analysis.primary.commands.test}`);
+    }
+    if (analysis.primary.commands.build) {
+      lines.push(`Build command: ${analysis.primary.commands.build}`);
+    }
+  } else {
     if (analysis.primary.commands.lint) {
       lines.push(`Lint command: ${analysis.primary.commands.lint}`);
     }
