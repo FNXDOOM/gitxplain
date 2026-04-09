@@ -294,6 +294,32 @@ test("selectReleaseTags maps each unreleased version to the release window end c
   assert.equal(selection.tags[0].targetShortSha, "4444444");
 });
 
+test("selectReleaseTags keeps direct version jumps without inventing intermediate tags", () => {
+  const sourceCommits = [
+    {
+      sha: "1111111111111111111111111111111111111111",
+      shortSha: "1111111",
+      subject: "chore: bump version to 0.1.5",
+      releaseVersion: "0.1.5",
+      versionChange: { from: ["0.1.4"], to: ["0.1.5"], hasVersionChange: true }
+    },
+    {
+      sha: "2222222222222222222222222222222222222222",
+      shortSha: "2222222",
+      subject: "chore: bump version to 0.1.7",
+      releaseVersion: "0.1.7",
+      versionChange: { from: ["0.1.5"], to: ["0.1.7"], hasVersionChange: true }
+    }
+  ];
+
+  const selection = selectReleaseTags(sourceCommits, ["0.1.5"]);
+
+  assert.deepEqual(selection.taggedVersions, ["0.1.5"]);
+  assert.equal(selection.latestDetectedVersion, "0.1.7");
+  assert.deepEqual(selection.tags.map((tag) => tag.tagName), ["0.1.7"]);
+  assert.equal(selection.tags[0].targetShortSha, "2222222");
+});
+
 test("selectReleaseTagsFromReleaseCommits maps each untagged release commit to a tag", () => {
   const releaseCommits = [
     {
@@ -648,6 +674,40 @@ test("buildReleaseTagPlan works when release is disconnected from main", () => {
   }
 });
 
+test("buildReleaseTagPlan works without a release branch", () => {
+  const repoDir = mkdtempSync(path.join(os.tmpdir(), "gitxplain-tag-no-release-"));
+  const runGit = (...args) =>
+    execFileSync("git", args, {
+      cwd: repoDir,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"]
+    }).trim();
+
+  try {
+    runGit("init", "-b", "main");
+    runGit("config", "user.name", "Test User");
+    runGit("config", "user.email", "test@example.com");
+
+    writeFileSync(path.join(repoDir, "package.json"), `${JSON.stringify({ name: "gitxplain", version: "0.1.0" }, null, 2)}\n`);
+    runGit("add", "package.json");
+    runGit("commit", "-m", "chore: scaffold app");
+    runGit("tag", "-a", "0.1.0", "-m", "release 0.1.0");
+
+    writeFileSync(path.join(repoDir, "package.json"), `${JSON.stringify({ name: "gitxplain", version: "0.1.1" }, null, 2)}\n`);
+    runGit("commit", "-am", "chore: bump version to 0.1.1");
+
+    const tagPlan = finalizeReleaseTagPlan(buildReleaseTagPlan(repoDir));
+
+    assert.equal(tagPlan.releaseExists, false);
+    assert.equal(tagPlan.baseRef, "HEAD");
+    assert.equal(tagPlan.latestDetectedVersion, "0.1.1");
+    assert.equal(tagPlan.latestTaggedVersion, "0.1.0");
+    assert.deepEqual(tagPlan.tags.map((tag) => tag.tagName), ["0.1.1"]);
+  } finally {
+    rmSync(repoDir, { recursive: true, force: true });
+  }
+});
+
 test("buildReleaseStatus reports missing tags and unmerged versions for an orphan release branch", () => {
   const repoDir = mkdtempSync(path.join(os.tmpdir(), "gitxplain-release-status-"));
   const runGit = (...args) =>
@@ -685,9 +745,10 @@ test("buildReleaseStatus reports missing tags and unmerged versions for an orpha
     assert.equal(status.latestReleaseVersion, "0.1.1");
     assert.equal(status.latestTaggedVersion, "0.1.1");
     assert.deepEqual(status.unmergedVersions, ["0.1.2"]);
-    assert.deepEqual(status.missingTagVersions, ["0.1.0"]);
+    assert.deepEqual(status.missingTagVersions, ["0.1.0", "0.1.2"]);
     assert.equal(status.drift.disconnectedHistory, true);
     assert.match(status.nextRecommendedAction, /merge --execute/);
+    assert.match(status.nextRecommendedAction, /tag --execute/);
   } finally {
     rmSync(repoDir, { recursive: true, force: true });
   }
@@ -728,8 +789,47 @@ test("buildReleaseTagPlan tags every untagged release commit on the release bran
     assert.equal(tagPlan.mergeBase, null);
     assert.deepEqual(tagPlan.taggedVersions, ["0.1.1"]);
     assert.equal(tagPlan.latestDetectedVersion, "0.1.2");
+    assert.equal(tagPlan.latestTaggedVersion, "0.1.1");
     assert.deepEqual(tagPlan.tags.map((tag) => tag.tagName), ["0.1.0", "0.1.2"]);
-    assert.deepEqual(tagPlan.tags.map((tag) => tag.targetSubject), ["release 0.1.0", "release 0.1.2"]);
+    assert.deepEqual(tagPlan.tags.map((tag) => tag.targetSubject), ["chore: scaffold app", "chore: bump version to 0.1.2"]);
+  } finally {
+    rmSync(repoDir, { recursive: true, force: true });
+  }
+});
+
+test("buildReleaseTagPlan follows source history even when release branch exists", () => {
+  const repoDir = mkdtempSync(path.join(os.tmpdir(), "gitxplain-tag-source-history-"));
+  const runGit = (...args) =>
+    execFileSync("git", args, {
+      cwd: repoDir,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"]
+    }).trim();
+
+  try {
+    runGit("init", "-b", "main");
+    runGit("config", "user.name", "Test User");
+    runGit("config", "user.email", "test@example.com");
+
+    writeFileSync(path.join(repoDir, "package.json"), `${JSON.stringify({ name: "gitxplain", version: "0.1.5" }, null, 2)}\n`);
+    runGit("add", "package.json");
+    runGit("commit", "-m", "chore: scaffold app");
+    runGit("tag", "-a", "0.1.5", "-m", "release 0.1.5");
+
+    const mergePlan = finalizeReleaseMergePlan(buildReleaseMergePlan(repoDir));
+    executeReleaseMerge(mergePlan, repoDir);
+    runGit("checkout", "main");
+
+    writeFileSync(path.join(repoDir, "package.json"), `${JSON.stringify({ name: "gitxplain", version: "0.1.7" }, null, 2)}\n`);
+    runGit("commit", "-am", "chore: bump version to 0.1.7");
+
+    const tagPlan = finalizeReleaseTagPlan(buildReleaseTagPlan(repoDir));
+
+    assert.equal(tagPlan.releaseExists, true);
+    assert.equal(tagPlan.latestDetectedVersion, "0.1.7");
+    assert.equal(tagPlan.latestTaggedVersion, "0.1.5");
+    assert.deepEqual(tagPlan.tags.map((tag) => tag.tagName), ["0.1.7"]);
+    assert.equal(tagPlan.tags[0].targetSubject, "chore: bump version to 0.1.7");
   } finally {
     rmSync(repoDir, { recursive: true, force: true });
   }
