@@ -11,6 +11,9 @@ const SUPPORTED_PROVIDERS = new Set([
   "chutes"
 ]);
 const SYSTEM_PROMPT = "You explain Git commits clearly and accurately for developers.";
+const REQUEST_TIMEOUT_MS = 30000;
+const REQUEST_RETRIES = 2;
+const RETRYABLE_STATUS_CODES = new Set([408, 425, 429, 500, 502, 503, 504]);
 
 export function getProviderConfig(providerOverride, modelOverride) {
   const provider = (providerOverride ?? process.env.LLM_PROVIDER ?? "openai").toLowerCase();
@@ -119,6 +122,53 @@ function extractGeminiText(data) {
     .join("\n");
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRetryableError(error) {
+  return error?.name === "AbortError" || error?.cause?.code === "UND_ERR_CONNECT_TIMEOUT";
+}
+
+export async function fetchWithRetry(url, init, options = {}) {
+  const retries = options.retries ?? REQUEST_RETRIES;
+  const timeoutMs = options.timeoutMs ?? REQUEST_TIMEOUT_MS;
+
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(new Error("Request timed out")), timeoutMs);
+
+    try {
+      const response = await fetch(url, {
+        ...init,
+        signal: controller.signal
+      });
+      clearTimeout(timeout);
+
+      if (RETRYABLE_STATUS_CODES.has(response.status) && attempt < retries) {
+        await sleep(250 * (attempt + 1));
+        continue;
+      }
+
+      return response;
+    } catch (error) {
+      clearTimeout(timeout);
+
+      if (attempt >= retries || !isRetryableError(error)) {
+        if (error?.name === "AbortError") {
+          throw new Error(`Request timed out after ${timeoutMs}ms.`);
+        }
+
+        throw error;
+      }
+
+      await sleep(250 * (attempt + 1));
+    }
+  }
+
+  throw new Error("Request failed after retries.");
+}
+
 async function consumeSseStream(response, getChunkText, onChunk) {
   const reader = response.body?.getReader();
   if (!reader) {
@@ -151,7 +201,13 @@ async function consumeSseStream(response, getChunkText, onChunk) {
           continue;
         }
 
-        const parsed = JSON.parse(line);
+        let parsed;
+        try {
+          parsed = JSON.parse(line);
+        } catch {
+          continue;
+        }
+
         const chunkText = getChunkText(parsed);
         if (!chunkText) {
           continue;
@@ -168,7 +224,7 @@ async function consumeSseStream(response, getChunkText, onChunk) {
 
 async function requestOpenAICompatible(config, prompt, options) {
   const startedAt = Date.now();
-  const response = await fetch(`${config.baseUrl}/chat/completions`, {
+  const response = await fetchWithRetry(`${config.baseUrl}/chat/completions`, {
     method: "POST",
     headers: buildOpenAICompatibleHeaders(config),
     body: JSON.stringify({
@@ -242,7 +298,7 @@ async function requestGemini(config, prompt, options) {
     ? `${config.baseUrl}/models/${config.model}:streamGenerateContent?alt=sse&key=${encodeURIComponent(config.apiKey)}`
     : `${config.baseUrl}/models/${config.model}:generateContent?key=${encodeURIComponent(config.apiKey)}`;
 
-  const response = await fetch(endpoint, {
+  const response = await fetchWithRetry(endpoint, {
     method: "POST",
     headers: {
       "Content-Type": "application/json"
