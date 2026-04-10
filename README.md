@@ -64,112 +64,344 @@ cp .env.example .env
 
 ## Usage
 
+Show the built-in command reference.
+
 ```bash
 gitxplain --help
+```
+
+Save the default AI provider.
+
+```bash
 gitxplain config set provider <name>
+```
+
+Save the API key for a provider.
+
+```bash
 gitxplain config set api-key <value> [--provider <name>]
+```
+
+Print one saved config value, or all of them.
+
+```bash
 gitxplain config get [key]
+```
+
+List saved user config values.
+
+```bash
 gitxplain config list
+```
+
+Analyze a single commit.
+
+```bash
 gitxplain <commit-id> [options]
+```
+
+Analyze a commit range.
+
+```bash
 gitxplain <start>..<end> [options]
+```
+
+Compare the current branch to a base branch.
+
+```bash
 gitxplain --branch [base-ref] [options]
+```
+
+Compare the current branch like a PR.
+
+```bash
 gitxplain --pr [base-ref] [options]
+```
+
+Plan commits for uncommitted working tree changes.
+
+```bash
 gitxplain --commit
+```
+
+Show release branch health and next steps.
+
+```bash
 gitxplain --release [status]
+```
+
+Preview or execute a release merge.
+
+```bash
 gitxplain --merge
+```
+
+Preview or create release tags.
+
+```bash
 gitxplain --tag
+```
+
+Print repository log output.
+
+```bash
 gitxplain --log
+```
+
+Print repository status output.
+
+```bash
 gitxplain --status
+```
+
+Detect and generate CI/CD workflow files.
+
+```bash
 gitxplain --pipeline
 ```
 
 Analysis:
 
+Generate a one-line summary.
+
 ```bash
 --summary
+```
+
+Focus on the issue being fixed.
+
+```bash
 --issues
+```
+
+Explain the fix in simple terms.
+
+```bash
 --fix
+```
+
+Explain behavior changes before vs after.
+
+```bash
 --impact
+```
+
+Generate the full structured analysis.
+
+```bash
 --full
+```
+
+Walk through the changed code file by file.
+
+```bash
 --lines
+```
+
+Generate review findings and risks.
+
+```bash
 --review
+```
+
+Focus on security-relevant changes.
+
+```bash
 --security
+```
+
+Propose splitting a commit into smaller commits.
+
+```bash
 --split
+```
+
+Propose commits for current working tree changes.
+
+```bash
 --commit
+```
+
+Apply a split, commit, merge, or tag plan.
+
+```bash
 --execute
+```
+
+Preview a plan without applying it.
+
+```bash
 --dry-run
 ```
 
 Release:
 
+Show release status details.
+
 ```bash
 --release [status]
+```
+
+Preview or apply a merge into the release branch.
+
+```bash
 --merge
+```
+
+Preview or create release tags from version bumps.
+
+```bash
 --tag
 ```
 
 Repo:
 
+Print the current repository log.
+
 ```bash
 --log
+```
+
+Print the current working tree status.
+
+```bash
 --status
+```
+
+Inspect the repo and create CI/CD workflow files.
+
+```bash
 --pipeline
 ```
 
 Quick Actions:
 
+Persist provider, model, and API key settings.
+
 ```bash
 config
+```
+
+Stage one or more files.
+
+```bash
 add
+```
+
+Unstage one or more files.
+
+```bash
 remove
+```
+
+Hard reset the repository to HEAD.
+
+```bash
 remove hard
+```
+
+Delete one or more files from the working tree.
+
+```bash
 del
+```
+
+Soft reset `HEAD~1` and keep your changes.
+
+```bash
 bin
+```
+
+Pop a stash entry.
+
+```bash
 pop
+```
+
+Run `git pull`.
+
+```bash
 pull
+```
+
+Run `git push`.
+
+```bash
 push
+```
+
+Install the `gitxplain` hook.
+
+```bash
 install-hook
+```
+
+Pass through to native Git commands.
+
+```bash
 git
 ```
 
 Output:
 
+Override the configured provider for one command.
+
 ```bash
 --provider <name>
---model <name>
---json
---markdown
---html
---quiet
---verbose
---clipboard
---stream
---max-diff-lines <n>
 ```
 
-Examples:
+Override the configured model for one command.
 
 ```bash
-npm start -- --help
-npm start -- config set provider openai
-npm start -- config set api-key your_key
-npm start -- HEAD~1 --summary
-npm start -- --commit
-npm start -- --release status
-npm start -- --merge
-npm start -- --tag
-npm start -- --log
-npm start -- --status
-npm start -- --pipeline
-npm start -- a1b2c3d --full
-npm start -- HEAD~1 --lines
-npm start -- HEAD~5..HEAD --markdown
-npm start -- --branch main --review
-npm start -- install-hook
-npm start -- HEAD~1 --provider groq --model llama-3.3-70b-versatile
-npm start -- HEAD~1 --provider gemini --model gemini-2.5-flash
-npm start -- HEAD~1 --provider chutes --model deepseek-ai/DeepSeek-V3-0324
-npm start -- HEAD --split --execute
+--model <name>
+```
+
+Return JSON output.
+
+```bash
+--json
+```
+
+Return Markdown output.
+
+```bash
+--markdown
+```
+
+Return HTML output.
+
+```bash
+--html
+```
+
+Reduce extra console output.
+
+```bash
+--quiet
+```
+
+Show extra response metadata.
+
+```bash
+--verbose
+```
+
+Copy the final output to the clipboard.
+
+```bash
+--clipboard
+```
+
+Stream model output as it arrives.
+
+```bash
+--stream
+```
+
+Limit diff size before sending it to the model.
+
+```bash
+--max-diff-lines <n>
 ```
 
 ## Running The CLI
