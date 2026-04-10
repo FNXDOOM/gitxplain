@@ -23,6 +23,11 @@ export function copyToClipboard(text) {
     runClipboardCommand("wl-copy", [], text);
     return;
   } catch {
-    runClipboardCommand("xclip", ["-selection", "clipboard"], text);
+    try {
+      runClipboardCommand("xclip", ["-selection", "clipboard"], text);
+      return;
+    } catch {
+      throw new Error("Clipboard copy failed on Linux. Install `wl-copy` or `xclip` and try again.");
+    }
   }
 }
