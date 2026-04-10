@@ -3,24 +3,7 @@ import os from "node:os";
 import { mkdtempSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
-
-const ANSI = {
-  reset: "\u001b[0m",
-  green: "\u001b[32m",
-  red: "\u001b[31m"
-};
-
-function supportsColor() {
-  return Boolean(process.stdout?.isTTY) && process.env.NO_COLOR == null;
-}
-
-function colorize(text, color) {
-  if (!supportsColor()) {
-    return text;
-  }
-
-  return `${color}${text}${ANSI.reset}`;
-}
+import { ANSI, colorize } from "./colorSupport.js";
 
 export function runGitCommand(args, cwd) {
   try {
