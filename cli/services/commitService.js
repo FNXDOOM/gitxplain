@@ -1,4 +1,3 @@
-import process from "node:process";
 import {
   deletePaths,
   fetchWorkingTreeData,
@@ -18,26 +17,7 @@ import {
   resolveTreeSha,
   writeCurrentIndexTree
 } from "./gitService.js";
-
-const ANSI = {
-  reset: "\u001b[0m",
-  bold: "\u001b[1m",
-  cyan: "\u001b[36m",
-  yellow: "\u001b[33m",
-  green: "\u001b[32m"
-};
-
-function supportsColor() {
-  return Boolean(process.stdout?.isTTY) && process.env.NO_COLOR == null;
-}
-
-function colorize(text, color) {
-  if (!supportsColor()) {
-    return text;
-  }
-
-  return `${color}${text}${ANSI.reset}`;
-}
+import { ANSI, colorize } from "./colorSupport.js";
 
 function extractJsonPayload(explanation) {
   const fencedMatch = explanation.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);

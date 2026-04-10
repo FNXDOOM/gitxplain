@@ -1,4 +1,3 @@
-import process from "node:process";
 import {
   createCommitFromTree,
   getCommitMetadata,
@@ -21,14 +20,7 @@ import {
   resolveCommitSha,
   runGitCommand
 } from "./gitService.js";
-
-const ANSI = {
-  reset: "\u001b[0m",
-  bold: "\u001b[1m",
-  cyan: "\u001b[36m",
-  yellow: "\u001b[33m",
-  green: "\u001b[32m"
-};
+import { ANSI, colorize } from "./colorSupport.js";
 
 const RELEASE_BRANCH = "release";
 const VERSION_PATTERN = /\b\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?\b/g;
@@ -36,18 +28,6 @@ const RELEASE_SUBJECT_PATTERN = /^release\s+(.+)$/i;
 const SEMVER_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 const INTEGER_PATTERN = /^\d+$/;
 const TAG_VERSION_PATTERN = /^v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?|\d+)$/;
-
-function supportsColor() {
-  return Boolean(process.stdout?.isTTY) && process.env.NO_COLOR == null;
-}
-
-function colorize(text, color) {
-  if (!supportsColor()) {
-    return text;
-  }
-
-  return `${color}${text}${ANSI.reset}`;
-}
 
 function unique(values) {
   return [...new Set(values)];
