@@ -101,46 +101,6 @@ function isFileHeading(line) {
   return /^(?:File|Path)\s*:/i.test(line) || /^[A-Za-z0-9_./-]+\.[A-Za-z0-9]+:\s*$/.test(line);
 }
 
-function classifyTone(line) {
-  if (/^\s*low(?:\b|[.:])/i.test(line)) {
-    return "good";
-  }
-
-  if (/^\s*medium(?:\b|[.:])/i.test(line)) {
-    return "neutral";
-  }
-
-  if (/^\s*high(?:\b|[.:])/i.test(line)) {
-    return "bad";
-  }
-
-  if (
-    /\b(no significant findings|no security findings|none apparent|looks good|safe|improved|improvement|fixed|resolved|successful|passes?|low risk|low severity)\b/i.test(
-      line
-    )
-  ) {
-    return "good";
-  }
-
-  if (
-    /\b(issue|issues|bug|broken|failure|failing|risk|risky|severity|vulnerability|insecure|regression|warning|problem|bad|missing|error|high risk|high severity)\b/i.test(
-      line
-    )
-  ) {
-    return "bad";
-  }
-
-  if (/\b(suggestion|consider|follow-up|todo|medium risk|medium severity)\b/i.test(line)) {
-    return "neutral";
-  }
-
-  return null;
-}
-
-function colorizeByTone(line, tone) {
-  return line;
-}
-
 function formatBulletLine(line) {
   const match = line.match(/^(\s*)([-*]|\d+\.)\s+(.*)$/);
 
@@ -189,7 +149,7 @@ function formatLine(line) {
     return severityLine;
   }
 
-  return colorizeByTone(line, classifyTone(line));
+  return line;
 }
 
 function formatExplanation(explanation) {
