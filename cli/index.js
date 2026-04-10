@@ -7,7 +7,14 @@ import { realpathSync } from "node:fs";
 import { generateExplanation } from "./services/aiService.js";
 import { loadEnvFile } from "./services/envLoader.js";
 import { copyToClipboard } from "./services/clipboardService.js";
-import { loadConfig } from "./services/configService.js";
+import {
+  applyConfigEnvironment,
+  getProviderApiKeyField,
+  getUserConfigPath,
+  loadConfig,
+  loadUserConfig,
+  updateUserConfig
+} from "./services/configService.js";
 import {
   buildBranchRange,
   deletePaths,
@@ -77,6 +84,7 @@ const MODE_FLAGS = new Map([
   ["--merge", "merge"],
   ["--tag", "tag"],
   ["--commit", "commit"],
+  ["--release", "release"],
   ["--log", "log"],
   ["--status", "status"],
   ["--pipeline", "pipeline"]
@@ -90,6 +98,7 @@ const FORMAT_FLAGS = new Map([
 
 const RESERVED_SUBCOMMANDS = new Set([
   "help",
+  "config",
   "install-hook",
   "git",
   "add",
@@ -98,49 +107,29 @@ const RESERVED_SUBCOMMANDS = new Set([
   "bin",
   "pop",
   "pull",
-  "push",
-  "commit",
-  "merge",
-  "tag",
-  "release",
-  "log",
-  "status",
-  "pipeline"
+  "push"
 ]);
 
 function printHelp() {
   console.log(`gitxplain - AI-powered Git change analysis, review, and commit workflow CLI
 
 Usage:
-  gitxplain help
   gitxplain --help
-  gitxplain git <native-git-args...>
+  gitxplain config set provider <name>
+  gitxplain config set api-key <value> [--provider <name>]
+  gitxplain config get [key]
+  gitxplain config list
   gitxplain <commit-id> [options]
   gitxplain <start>..<end> [options]
   gitxplain --branch [base-ref] [options]
   gitxplain --pr [base-ref] [options]
-  gitxplain commit
   gitxplain --commit
-  gitxplain merge
+  gitxplain --release [status]
   gitxplain --merge
-  gitxplain tag
   gitxplain --tag
-  gitxplain release
-  gitxplain release status
-  gitxplain log
   gitxplain --log
-  gitxplain status
   gitxplain --status
   gitxplain --pipeline
-  gitxplain add <path> [more-paths...]
-  gitxplain remove <path> [more-paths...]
-  gitxplain remove hard
-  gitxplain del <path> [more-paths...]
-  gitxplain bin
-  gitxplain pop [stash-index]
-  gitxplain pull [remote] [branch]
-  gitxplain push [remote] [branch]
-  gitxplain install-hook [hook-name]
 
 Analysis:
   --summary       Generate a one-line summary of a change
@@ -157,16 +146,17 @@ Analysis:
   --dry-run       Preview the plan without executing it
 
 Release:
-  merge           Preview or apply a merge into the release branch
-  tag             Preview or create release tags from version bumps
-  release status  Show release branch health and next recommended action
+  --release [status]  Show release branch health and next recommended action
+  --merge         Preview or apply a merge into the release branch
+  --tag           Preview or create release tags from version bumps
 
 Repo:
-  log             Print Git log entries for the current repository
-  status          Print Git working tree status for the current repository
-  pipeline        Detect the current repository stack and create CI/CD workflow files
+  --log           Print Git log entries for the current repository
+  --status        Print Git working tree status for the current repository
+  --pipeline      Detect the current repository stack and create CI/CD workflow files
 
 Quick Actions:
+  config          Persist provider, model, and API key settings
   add             Stage one or more files with git add
   remove          Unstage one or more files with git restore --staged
   remove hard     Hard reset the repository to HEAD
@@ -196,11 +186,11 @@ Comparison:
 
 Config:
   Project config: .gitxplainrc or .gitxplainrc.json
-  User config: ~/.gitxplain/config.json
+  User config: ~/.gitxplain/config.json (macOS/Linux) or %USERPROFILE%\\.gitxplain\\config.json (Windows)
 
 Notes:
   Run gitxplain inside a Git repository.
-  If no mode is supplied, gitxplain prompts you to choose one interactively.
+  If no command or mode is supplied, gitxplain prints this help text.
   Use --provider or --model to override your config or environment for one command.
   Use gitxplain git <args...> to run any native Git subcommand with its normal flags.
 `);
@@ -232,6 +222,104 @@ function parseNumber(value, fallback = null) {
   }
 
   return parsed;
+}
+
+function redactConfigValue(key, value) {
+  if (typeof value !== "string") {
+    return value;
+  }
+
+  if (!/api[_-]?key/i.test(key)) {
+    return value;
+  }
+
+  if (value.length <= 8) {
+    return "*".repeat(value.length);
+  }
+
+  return `${value.slice(0, 4)}...${value.slice(-4)}`;
+}
+
+function printConfigEntries(config) {
+  const entries = Object.entries(config).sort(([left], [right]) => left.localeCompare(right));
+
+  if (entries.length === 0) {
+    console.log("No user config saved yet.");
+    return;
+  }
+
+  for (const [key, value] of entries) {
+    console.log(`${key}: ${redactConfigValue(key, value)}`);
+  }
+}
+
+function resolveConfigSetUpdate(parsed, currentConfig) {
+  const key = parsed.configKey;
+  const value = parsed.configValue;
+
+  if (!key || !value) {
+    throw new Error('Usage: gitxplain config set <provider|model|api-key> <value> [--provider <name>]');
+  }
+
+  if (key === "provider") {
+    return { provider: value.toLowerCase() };
+  }
+
+  if (key === "model") {
+    return { model: value };
+  }
+
+  if (key === "api-key") {
+    const resolvedProvider = (parsed.provider ?? currentConfig.provider ?? currentConfig.LLM_PROVIDER ?? "").toLowerCase();
+    const apiKeyField = getProviderApiKeyField(resolvedProvider);
+
+    if (!apiKeyField) {
+      throw new Error("Set a provider first with `gitxplain config set provider <name>`, or pass `--provider <name>`.");
+    }
+
+    return { [apiKeyField]: value };
+  }
+
+  return { [key]: value };
+}
+
+function handleConfigCommand(parsed) {
+  const currentConfig = loadUserConfig();
+
+  if (parsed.configAction === "list" || parsed.configAction == null) {
+    console.log(`User config: ${getUserConfigPath()}`);
+    printConfigEntries(currentConfig);
+    return 0;
+  }
+
+  if (parsed.configAction === "get") {
+    console.log(`User config: ${getUserConfigPath()}`);
+
+    if (!parsed.configKey) {
+      printConfigEntries(currentConfig);
+      return 0;
+    }
+
+    const value = currentConfig[parsed.configKey];
+    if (value === undefined) {
+      console.log(`No value saved for ${parsed.configKey}.`);
+      return 0;
+    }
+
+    console.log(`${parsed.configKey}: ${redactConfigValue(parsed.configKey, value)}`);
+    return 0;
+  }
+
+  if (parsed.configAction === "set") {
+    const updates = resolveConfigSetUpdate(parsed, currentConfig);
+    const { configPath } = updateUserConfig(updates);
+    const [savedKey, savedValue] = Object.entries(updates)[0];
+    console.log(`Saved ${savedKey} to ${configPath}.`);
+    console.log(`${savedKey}: ${redactConfigValue(savedKey, savedValue)}`);
+    return 0;
+  }
+
+  throw new Error(`Unknown config subcommand: ${parsed.configAction}`);
 }
 
 function isDirectNativeGitSubcommand(subcommand, knownGitSubcommands) {
@@ -277,17 +365,13 @@ export function parseArgs(argv, options = {}) {
   const explicitMode = [...MODE_FLAGS.entries()].find(([flag]) => flags.has(flag))?.[1] ?? null;
   const explicitFormat = [...FORMAT_FLAGS.entries()].find(([flag]) => flags.has(flag))?.[1] ?? null;
   const isInstallHook = subcommand === "install-hook";
+  const isConfigCommand = subcommand === "config";
   const isNativeGitWrapper = subcommand === "git";
-  const isLogCommand = subcommand === "log";
-  const isStatusCommand = subcommand === "status";
-  const isCommitCommand = subcommand === "commit";
-  const isMergeCommand = subcommand === "merge";
-  const isTagCommand = subcommand === "tag";
-  const isReleaseCommand = subcommand === "release";
+  const isReleaseCommand = flags.has("--release");
   const isAddCommand = subcommand === "add";
   const isRemoveCommand = subcommand === "remove";
   const isDeleteCommand = subcommand === "del";
-  const isPipelineCommand = subcommand === "pipeline" || flags.has("--pipeline");
+  const isPipelineCommand = flags.has("--pipeline");
   const isBinCommand = subcommand === "bin";
   const isPopCommand = subcommand === "pop";
   const isPullCommand = subcommand === "pull";
@@ -300,13 +384,17 @@ export function parseArgs(argv, options = {}) {
     help: flags.has("--help") || subcommand === "help",
     nativeGitCommand: isNativeGitCommand,
     installHook: isInstallHook,
-    logCommand: isLogCommand,
-    statusCommand: isStatusCommand,
-    commitCommand: isCommitCommand,
-    mergeCommand: isMergeCommand,
-    tagCommand: isTagCommand,
+    configCommand: isConfigCommand,
+    configAction: isConfigCommand ? positional[1] ?? null : null,
+    configKey: isConfigCommand ? positional[2] ?? null : null,
+    configValue: isConfigCommand ? positional.slice(3).join(" ") || null : null,
+    logCommand: false,
+    statusCommand: false,
+    commitCommand: false,
+    mergeCommand: false,
+    tagCommand: false,
     releaseCommand: isReleaseCommand,
-    releaseAction: isReleaseCommand ? positional[1] ?? "status" : null,
+    releaseAction: isReleaseCommand ? positional[0] ?? "status" : null,
     addCommand: isAddCommand,
     removeCommand: isRemoveCommand,
     deleteCommand: isDeleteCommand,
@@ -327,12 +415,8 @@ export function parseArgs(argv, options = {}) {
     pushBranch: isPushCommand ? positional[2] ?? null : null,
     commitRef:
       isInstallHook ||
+      isConfigCommand ||
       isNativeGitCommand ||
-      isLogCommand ||
-      isStatusCommand ||
-      isCommitCommand ||
-      isMergeCommand ||
-      isTagCommand ||
       isReleaseCommand ||
       isAddCommand ||
       isRemoveCommand ||
@@ -360,6 +444,7 @@ export function parseArgs(argv, options = {}) {
     quiet: flags.has("--quiet"),
     execute: flags.has("--execute"),
     dryRun: flags.has("--dry-run"),
+    release: flags.has("--release"),
     log: flags.has("--log"),
     status: flags.has("--status"),
     merge: flags.has("--merge"),
@@ -473,15 +558,20 @@ function renderFinalOutput({ runtimeOptions, mode, commitData, explanation, resp
 
 export async function main(argv = process.argv) {
   const cwd = process.cwd();
-  const config = loadConfig(cwd);
   const parsed = parseArgs(argv);
   const hasNoCommandOrFlags = argv.slice(2).length === 0;
 
   loadEnvFile(cwd); // Ensure environment is loaded first
+  const config = loadConfig(cwd);
+  applyConfigEnvironment(config);
 
   if (parsed.help || hasNoCommandOrFlags) {
     printHelp();
     return 0;
+  }
+
+  if (parsed.configCommand) {
+    return handleConfigCommand(parsed);
   }
 
   if (parsed.nativeGitCommand) {
@@ -499,12 +589,12 @@ export async function main(argv = process.argv) {
     return 0;
   }
 
-  if (parsed.logCommand || parsed.log) {
+  if (parsed.log) {
     console.log(getRepositoryLog(cwd));
     return 0;
   }
 
-  if (parsed.statusCommand || parsed.status) {
+  if (parsed.status) {
     console.log(getRepositoryStatus(cwd));
     return 0;
   }
@@ -648,7 +738,7 @@ export async function main(argv = process.argv) {
     return 0;
   }
 
-  if (mode === "commit" || parsed.commitCommand) {
+  if (mode === "commit") {
     const commitData = fetchWorkingTreeData(cwd);
 
     if (commitData.filesChanged.length === 0 || commitData.diff === "") {
@@ -698,7 +788,7 @@ export async function main(argv = process.argv) {
     return 0;
   }
 
-  if (mode === "merge" || parsed.mergeCommand || parsed.merge) {
+  if (mode === "merge" || parsed.merge) {
     if (parsed.commitRef) {
       throw new Error("--merge works from the current branch and does not accept a commit ref.");
     }
@@ -730,7 +820,7 @@ export async function main(argv = process.argv) {
     return 0;
   }
 
-  if (mode === "tag" || parsed.tagCommand || parsed.tag) {
+  if (mode === "tag" || parsed.tag) {
     if (parsed.commitRef) {
       throw new Error("--tag works from the current branch and does not accept a commit ref.");
     }

@@ -546,11 +546,11 @@ function buildDriftStatus(sourceRef, sourceLabel, releaseExists, cwd) {
 
 function getNextRecommendedAction({ releaseExists, mergePlan, missingTagCount }) {
   if (!releaseExists && mergePlan.windows.length > 0) {
-    return `Run \`gitxplain merge --execute\` to create ${RELEASE_BRANCH} and promote ${mergePlan.windows.length} unreleased version(s).`;
+    return `Run \`gitxplain --merge --execute\` to create ${RELEASE_BRANCH} and promote ${mergePlan.windows.length} unreleased version(s).`;
   }
 
   if (!releaseExists && missingTagCount > 0) {
-    return `Run \`gitxplain tag --execute\` to create ${missingTagCount} missing version tag(s) on the current branch.`;
+    return `Run \`gitxplain --tag --execute\` to create ${missingTagCount} missing version tag(s) on the current branch.`;
   }
 
   if (!releaseExists) {
@@ -558,15 +558,15 @@ function getNextRecommendedAction({ releaseExists, mergePlan, missingTagCount })
   }
 
   if (mergePlan.windows.length > 0 && missingTagCount > 0) {
-    return `Run \`gitxplain merge --execute\` to update ${RELEASE_BRANCH}, and \`gitxplain tag --execute\` to create ${missingTagCount} missing version tag(s).`;
+    return `Run \`gitxplain --merge --execute\` to update ${RELEASE_BRANCH}, and \`gitxplain --tag --execute\` to create ${missingTagCount} missing version tag(s).`;
   }
 
   if (mergePlan.windows.length > 0) {
-    return `Run \`gitxplain merge --execute\` to promote ${mergePlan.windows.length} unreleased version(s) to ${RELEASE_BRANCH}.`;
+    return `Run \`gitxplain --merge --execute\` to promote ${mergePlan.windows.length} unreleased version(s) to ${RELEASE_BRANCH}.`;
   }
 
   if (missingTagCount > 0) {
-    return `Run \`gitxplain tag --execute\` to create ${missingTagCount} missing version tag(s).`;
+    return `Run \`gitxplain --tag --execute\` to create ${missingTagCount} missing version tag(s).`;
   }
 
   return "No action required. Release branch and tags are up to date.";

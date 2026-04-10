@@ -714,7 +714,7 @@ export function writePipelineFiles(cwd, analysis, selection) {
   }
 
   if (selection.id === "container" && !selection.files.includes(".github/workflows/ci.yml")) {
-    notes.push("This option only creates the container workflow. Run `gitxplain pipeline` again if you also want CI verification.");
+    notes.push("This option only creates the container workflow. Run `gitxplain --pipeline` again if you also want CI verification.");
   }
 
   return { writtenFiles, notes };
