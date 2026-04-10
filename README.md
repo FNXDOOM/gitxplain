@@ -55,7 +55,7 @@ Optional environment variables:
 Optional config files:
 
 - Project: `.gitxplainrc` or `.gitxplainrc.json`
-- User: `~/.gitxplain/config.json`
+- User: `~/.gitxplain/config.json` on macOS/Linux, or `%USERPROFILE%\.gitxplain\config.json` on Windows
 
 You can start from:
 
@@ -66,23 +66,20 @@ cp .env.example .env
 ## Usage
 
 ```bash
-gitxplain help
+gitxplain --help
+gitxplain config set provider openai
+gitxplain config set api-key your_key
+gitxplain config list
 gitxplain branch -a
 gitxplain checkout -b feature/demo
-gitxplain commit
 gitxplain --commit
-gitxplain merge
+gitxplain --release
+gitxplain --release status
 gitxplain --merge
-gitxplain tag
 gitxplain --tag
-gitxplain release
-gitxplain release status
-gitxplore tag
 gitxplore --tag
-gitxplain log --log
-gitxplain status
+gitxplain --log
 gitxplain --status
-gitxplain pipeline
 gitxplain --pipeline
 gitxplain add README.md
 gitxplain remove README.md
@@ -106,9 +103,7 @@ gitxplain <commit-id> --review
 gitxplain <commit-id> --security
 gitxplain <commit-id> --split
 gitxplain --commit --execute
-gitxplain merge
 gitxplain --merge --execute
-gitxplain tag
 gitxplain --tag --execute
 gitxplain <commit-id> --json
 gitxplain <commit-id> --markdown
@@ -117,7 +112,7 @@ gitxplain <commit-id> --stream
 gitxplain <commit-id> --clipboard
 gitxplain <commit-id> --verbose
 gitxplain <commit-id> --quiet
-gitxplain log --log
+gitxplain --log
 gitxplain <start>..<end> --markdown
 gitxplain --branch main --review
 gitxplain --pr origin/main --security
@@ -131,10 +126,10 @@ Examples:
 
 ```bash
 npm start -- HEAD~1 --summary
-npm start -- commit
-npm start -- merge
-npm start -- tag
-npm start -- log --log
+npm start -- --commit
+npm start -- --merge
+npm start -- --tag
+npm start -- --log
 npm start -- a1b2c3d --full
 npm start -- HEAD~1 --lines
 npm start -- HEAD~5..HEAD --markdown
@@ -150,14 +145,15 @@ npm start -- HEAD --split --execute
 To use the actual `gitxplain` command directly:
 
 ```bash
-cd /home/guru/Dev/gitxplain
 npm link
 ```
+
+Run that from the repository root. `npm link` works on Windows, macOS, and Linux, though it may require elevated privileges depending on your Node/npm install prefix.
 
 Then from any Git repository:
 
 ```bash
-gitxplain help
+gitxplain --help
 gitxplain HEAD~1 --full
 gitxplain a1b2c3d --summary
 gitxplain HEAD~1 --lines
@@ -168,7 +164,7 @@ gitxplain --branch main --review
 If you do not want to link it globally, you can still run it locally:
 
 ```bash
-node /home/guru/Dev/gitxplain/cli/index.js HEAD~1 --full
+node ./cli/index.js HEAD~1 --full
 ```
 
 ## Output Modes
@@ -184,11 +180,11 @@ node /home/guru/Dev/gitxplain/cli/index.js HEAD~1 --full
 - `--split`: propose how to split a commit into multiple atomic commits
 - `--merge`: preview or execute a merge into the `release` branch based on detected version bumps
 - `--tag`: preview or create release tags from the same detected version windows
-- `release status`: inspect release branch health, missing tags, source-vs-release drift, and the next recommended action
+- `--release [status]`: inspect release branch health, missing tags, source-vs-release drift, and the next recommended action
 - `--commit`: propose commits for current uncommitted changes
 - `--log`: print Git log entries for the current repository
 - `--status`: print Git working tree status for the current repository
-- `pipeline` or `--pipeline`: inspect the current repository and generate GitHub Actions CI/CD workflows
+- `--pipeline`: inspect the current repository and generate GitHub Actions CI/CD workflows
 - `--execute`: apply a proposed split by rewriting history
 - `--dry-run`: preview the split or commit plan without applying it
 - `--json`: return structured JSON instead of formatted text
@@ -202,10 +198,11 @@ GitHub authentication, repository browsing, issues, pull requests, commit browsi
 Use:
 
 ```bash
-cd /home/guru/Dev/ghxplain
 npm link
 ghxplain help
 ```
+
+Run that from the `ghxplain` repository root.
 
 If no analysis flag is supplied, the CLI asks what kind of explanation you want.
 
@@ -214,18 +211,17 @@ If no analysis flag is supplied, the CLI asks what kind of explanation you want.
 Print recent log entries from the current repository:
 
 ```bash
-gitxplain log
 gitxplain --log
 ```
 
-Both forms print the repository history in a compact one-line format using the current repository, without calling the LLM.
+This prints the repository history in a compact one-line format using the current repository, without calling the LLM.
 
 ## Quick Actions
 
 Run a few common Git actions directly through `gitxplain`:
 
 ```bash
-gitxplain status
+gitxplain --status
 gitxplain add README.md
 gitxplain remove README.md
 gitxplain remove hard
@@ -308,7 +304,6 @@ Warning: `--split --execute` rewrites history. If the commit was already pushed,
 Preview the release merge plan for the current branch:
 
 ```bash
-gitxplain merge
 gitxplain --merge
 ```
 
@@ -325,9 +320,7 @@ This command scans commits on your current branch after the branch split point a
 Preview the release tags for the current branch:
 
 ```bash
-gitxplain tag
 gitxplain --tag
-gitxplore tag
 gitxplore --tag
 ```
 
@@ -345,7 +338,6 @@ This command scans the full history of your current branch, detects version bump
 Preview how the current uncommitted changes should be committed:
 
 ```bash
-gitxplain commit
 gitxplain --commit
 ```
 
@@ -381,6 +373,15 @@ Example `.gitxplainrc`:
 
 CLI flags still override config values for a single command.
 
+You can also save provider settings permanently with the CLI:
+
+```bash
+gitxplain config set provider openai
+gitxplain config set api-key your_key
+gitxplain config set model gpt-4.1-mini
+gitxplain config list
+```
+
 ## Clipboard, Streaming, And Hooks
 
 Copy the final output to your clipboard:
@@ -402,6 +403,29 @@ gitxplain install-hook
 ```
 
 ## Provider Setup
+
+Recommended persistent setup:
+
+```bash
+gitxplain config set provider openai
+gitxplain config set api-key your_key
+```
+
+You can switch providers later:
+
+```bash
+gitxplain config set provider groq
+gitxplain config set api-key your_key
+```
+
+If you want to inspect what is saved:
+
+```bash
+gitxplain config list
+gitxplain config get provider
+```
+
+Environment variables still work if you prefer them.
 
 OpenAI:
 
@@ -458,3 +482,5 @@ To make the command globally available during local development:
 ```bash
 npm link
 ```
+
+Run this from the repository root. On some systems, you may need an elevated shell depending on where npm installs global links.
