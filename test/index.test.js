@@ -61,6 +61,13 @@ test("parseArgs handles help and install-hook commands", () => {
   assert.equal(hookParsed.hookName, "post-commit");
 });
 
+test("parseArgs handles version flag", () => {
+  const parsed = parseArgs(["node", "gitxplain", "--version"]);
+
+  assert.equal(parsed.version, true);
+  assert.equal(parsed.commitRef, null);
+});
+
 test("parseArgs handles config set commands", () => {
   const parsed = parseArgs(["node", "gitxplain", "config", "set", "api-key", "secret-token", "--provider", "openai"]);
 
