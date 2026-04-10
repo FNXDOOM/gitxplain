@@ -1,9 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import {
   fetchBlameData,
   fetchCommitData,
   fetchCommitDataForFile,
+  fetchConflictData,
   fetchStashData,
   gitPull,
   gitPush,
@@ -142,6 +146,69 @@ test("fetchStashData supports file-scoped stash analysis", () => {
 
   assert.equal(data.displayRef, "stash@{0} :: src/auth.js");
   assert.deepEqual(data.filesChanged, ["src/auth.js"]);
+});
+
+test("fetchConflictData extracts unresolved conflict blocks", () => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "gitxplain-conflict-"));
+
+  try {
+    fs.mkdirSync(path.join(cwd, "src"), { recursive: true });
+    fs.writeFileSync(
+      path.join(cwd, "src", "auth.js"),
+      [
+        "function resolve() {",
+        "<<<<<<< HEAD",
+        "  return currentValue;",
+        "=======",
+        "  return incomingValue;",
+        ">>>>>>> feature-branch",
+        "}"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const data = fetchConflictData(cwd, null, (args) =>
+      args.join(" ") === "diff --name-only --diff-filter=U" ? "src/auth.js" : ""
+    );
+
+    assert.equal(data.analysisType, "conflict");
+    assert.equal(data.displayRef, "working-tree conflicts");
+    assert.deepEqual(data.filesChanged, ["src/auth.js"]);
+    assert.match(data.diff, /Conflict 1 \(src\/auth\.js:2-6\)/);
+    assert.match(data.diff, /Current Side \(HEAD\):/);
+    assert.match(data.diff, /Incoming Side \(feature-branch\):/);
+  } finally {
+    fs.rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("fetchConflictData supports file-scoped conflict analysis", () => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "gitxplain-conflict-file-"));
+
+  try {
+    fs.mkdirSync(path.join(cwd, "src"), { recursive: true });
+    fs.writeFileSync(
+      path.join(cwd, "src", "auth.js"),
+      [
+        "<<<<<<< ours",
+        "const mode = 'a';",
+        "=======",
+        "const mode = 'b';",
+        ">>>>>>> theirs"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const data = fetchConflictData(cwd, "src/auth.js", (args) =>
+      args.join(" ") === "diff --name-only --diff-filter=U -- src/auth.js" ? "src/auth.js" : ""
+    );
+
+    assert.equal(data.displayRef, "src/auth.js");
+    assert.equal(data.commitMessage, "Merge conflict analysis for src/auth.js");
+    assert.equal(data.stats, "1 conflict block across 1 file");
+  } finally {
+    fs.rmSync(cwd, { recursive: true, force: true });
+  }
 });
 
 test("getRepositoryLog fetches full repository history by default", () => {

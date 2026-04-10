@@ -1,6 +1,6 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import os from "node:os";
-import { mkdtempSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { ANSI, colorize } from "./colorSupport.js";
@@ -693,6 +693,80 @@ function buildFileScopedDisplayRef(targetRef, filePath) {
   return `${targetRef} :: ${filePath}`;
 }
 
+function extractConflictBlocks(fileContent) {
+  const lines = fileContent.split("\n");
+  const blocks = [];
+  let index = 0;
+
+  while (index < lines.length) {
+    if (!lines[index].startsWith("<<<<<<<")) {
+      index += 1;
+      continue;
+    }
+
+    const startLine = index + 1;
+    const currentLabel = lines[index].slice("<<<<<<<".length).trim() || "current";
+    index += 1;
+
+    const currentLines = [];
+    while (index < lines.length && !lines[index].startsWith("=======")) {
+      currentLines.push(lines[index]);
+      index += 1;
+    }
+
+    if (index >= lines.length) {
+      break;
+    }
+
+    index += 1;
+    const incomingLines = [];
+    while (index < lines.length && !lines[index].startsWith(">>>>>>>")) {
+      incomingLines.push(lines[index]);
+      index += 1;
+    }
+
+    if (index >= lines.length) {
+      break;
+    }
+
+    const incomingLabel = lines[index].slice(">>>>>>>".length).trim() || "incoming";
+    const endLine = index + 1;
+    index += 1;
+
+    blocks.push({
+      startLine,
+      endLine,
+      currentLabel,
+      incomingLabel,
+      currentText: currentLines.join("\n"),
+      incomingText: incomingLines.join("\n")
+    });
+  }
+
+  return blocks;
+}
+
+function buildConflictAnalysisDiff(conflicts) {
+  return conflicts
+    .map((fileConflict) => {
+      const blockText = fileConflict.blocks
+        .map(
+          (block, idx) =>
+            [
+              `Conflict ${idx + 1} (${fileConflict.filePath}:${block.startLine}-${block.endLine})`,
+              `Current Side (${block.currentLabel}):`,
+              block.currentText || "<empty>",
+              `Incoming Side (${block.incomingLabel}):`,
+              block.incomingText || "<empty>"
+            ].join("\n")
+        )
+        .join("\n\n");
+
+      return [`File: ${fileConflict.filePath}`, blockText].join("\n");
+    })
+    .join("\n\n");
+}
+
 function formatIsoDateFromUnixTimestamp(value) {
   const timestampMs = Number.parseInt(value, 10) * 1000;
   if (Number.isNaN(timestampMs)) {
@@ -882,6 +956,46 @@ export function fetchStashData(stashRef = null, cwd, filePath = null, runner = r
     diff,
     filesChanged: parseFilesChanged(filesChangedRaw),
     stats: parseStatsLine(statsRaw)
+  };
+}
+
+export function fetchConflictData(cwd, filePath = null, runner = runGitCommand) {
+  const fileArgs = filePath ? ["--", filePath] : [];
+  const conflictedFilesRaw = runner(["diff", "--name-only", "--diff-filter=U", ...fileArgs], cwd);
+  const conflictedFiles = parseFilesChanged(conflictedFilesRaw);
+
+  if (conflictedFiles.length === 0) {
+    throw new Error(filePath ? `No unresolved merge conflicts found for ${filePath}.` : "No unresolved merge conflicts found in the working tree.");
+  }
+
+  const conflicts = conflictedFiles.map((relativePath) => {
+    const absolutePath = path.resolve(cwd, relativePath);
+    const content = readFileSync(absolutePath, "utf8");
+    const blocks = extractConflictBlocks(content);
+
+    return {
+      filePath: relativePath,
+      blocks
+    };
+  }).filter((entry) => entry.blocks.length > 0);
+
+  if (conflicts.length === 0) {
+    throw new Error(filePath ? `Conflict markers were not found in ${filePath}.` : "Git reports unresolved conflicts, but no conflict markers were found in the conflicted files.");
+  }
+
+  const conflictCount = conflicts.reduce((sum, entry) => sum + entry.blocks.length, 0);
+
+  return {
+    analysisType: "conflict",
+    targetRef: filePath ? `conflict:${filePath}` : "conflict",
+    displayRef: filePath ?? "working-tree conflicts",
+    commitId: null,
+    commitCount: conflictCount,
+    commits: [],
+    commitMessage: filePath ? `Merge conflict analysis for ${filePath}` : "Merge conflict analysis for the working tree",
+    diff: buildConflictAnalysisDiff(conflicts),
+    filesChanged: conflicts.map((entry) => entry.filePath),
+    stats: `${conflictCount} conflict block${conflictCount === 1 ? "" : "s"} across ${conflicts.length} file${conflicts.length === 1 ? "" : "s"}`
   };
 }
 
