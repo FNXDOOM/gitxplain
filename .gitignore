@@ -6,6 +6,7 @@
 
 # Dependencies
 node_modules/
+pnpm-store/
 
 # Build outputs
 dist/
@@ -29,6 +30,7 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 lerna-debug.log*
+.pnpm-debug.log*
 
 # Python
 __pycache__/
@@ -51,6 +53,12 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+
+# TypeScript
+*.tsbuildinfo
+
+# Turborepo
+.turbo/
 
 # Cache & Temp
 .cache/

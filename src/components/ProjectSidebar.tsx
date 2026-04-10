@@ -251,7 +251,7 @@ export default function ProjectSidebar() {
         {githubExpanded && (
           <div className="rounded-md border border-border bg-muted/40 p-2">
             <div className="text-xs font-medium mb-2 text-muted-foreground">GitHub Repositories</div>
-            <div className="max-h-44 overflow-y-auto space-y-1">
+            <div className="max-h-44 overflow-y-auto hide-scrollbar space-y-1">
               {githubRepos.length === 0 && !githubLoading ? (
                 <p className="text-xs text-muted-foreground">No repositories loaded yet.</p>
               ) : (
@@ -282,7 +282,7 @@ export default function ProjectSidebar() {
       </div>
 
       {/* Project List */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto hide-scrollbar">
         {projects.length === 0 ? (
           <div className="p-4 text-center text-muted-foreground text-sm">
             <FolderGit2 className="w-12 h-12 mx-auto mb-2 opacity-50" />

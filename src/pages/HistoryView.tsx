@@ -604,7 +604,7 @@ export default function HistoryView() {
         </div>
 
         {/* Commit List */}
-        <div className="flex-1 overflow-y-auto divide-y divide-border">
+        <div className="flex-1 overflow-y-auto hide-scrollbar divide-y divide-border">
           {displayCommits.length === 0 && searchQuery ? (
             <div className="p-6 text-center text-muted-foreground">
               <p className="text-sm">No commits match "{searchQuery}"</p>
