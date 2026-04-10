@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { execSync } from "node:child_process";
-import { getProviderConfig, validateProviderConfig } from "./aiService.js";
+import { fetchWithRetry, getProviderConfig, validateProviderConfig } from "./aiService.js";
 import { fetchGitHubRepositories, fetchGitHubCommits, fetchCommitDetails, fetchRepoTree, downloadCommitArchive, fetchFileContent, fetchRepoIssues } from "./gitConnectionService.js";
 
 const COLORS = {
@@ -146,7 +146,7 @@ Analysis:
       temperature: 0.7
     };
 
-    const response = await fetch(`${this.config.baseUrl}/chat/completions`, {
+    const response = await fetchWithRetry(`${this.config.baseUrl}/chat/completions`, {
       method: "POST",
       headers,
       body: JSON.stringify(body)
@@ -172,7 +172,7 @@ Analysis:
   }
 
   async sendGeminiMessage() {
-    const response = await fetch(
+    const response = await fetchWithRetry(
       `${this.config.baseUrl}/models/${this.config.model}:generateContent?key=${encodeURIComponent(this.config.apiKey)}`,
       {
         method: "POST",
