@@ -103,7 +103,6 @@ test("parseArgs treats merge subcommand as native git passthrough", () => {
 
   assert.equal(parsed.nativeGitCommand, true);
   assert.deepEqual(parsed.nativeGitArgs, ["merge"]);
-  assert.equal(parsed.mergeCommand, false);
   assert.equal(parsed.commitRef, null);
 });
 
@@ -121,7 +120,6 @@ test("parseArgs treats tag subcommand as native git passthrough", () => {
 
   assert.equal(parsed.nativeGitCommand, true);
   assert.deepEqual(parsed.nativeGitArgs, ["tag"]);
-  assert.equal(parsed.tagCommand, false);
   assert.equal(parsed.commitRef, null);
 });
 
@@ -139,7 +137,6 @@ test("parseArgs treats repository log subcommand as native git passthrough", () 
 
   assert.equal(parsed.nativeGitCommand, true);
   assert.deepEqual(parsed.nativeGitArgs, ["log"]);
-  assert.equal(parsed.logCommand, false);
   assert.equal(parsed.log, false);
   assert.equal(parsed.commitRef, null);
 });
@@ -147,7 +144,6 @@ test("parseArgs treats repository log subcommand as native git passthrough", () 
 test("parseArgs handles repository log flag", () => {
   const parsed = parseArgs(["node", "gitxplain", "--log"]);
 
-  assert.equal(parsed.logCommand, false);
   assert.equal(parsed.log, true);
   assert.equal(parsed.commitRef, null);
   assert.equal(parsed.mode, "log");
@@ -158,7 +154,6 @@ test("parseArgs treats repository status subcommand as native git passthrough", 
 
   assert.equal(parsed.nativeGitCommand, true);
   assert.deepEqual(parsed.nativeGitArgs, ["status"]);
-  assert.equal(parsed.statusCommand, false);
   assert.equal(parsed.status, false);
   assert.equal(parsed.commitRef, null);
 });
@@ -166,7 +161,6 @@ test("parseArgs treats repository status subcommand as native git passthrough", 
 test("parseArgs handles repository status flag", () => {
   const parsed = parseArgs(["node", "gitxplain", "--status"]);
 
-  assert.equal(parsed.statusCommand, false);
   assert.equal(parsed.status, true);
   assert.equal(parsed.commitRef, null);
   assert.equal(parsed.mode, "status");
@@ -267,7 +261,6 @@ test("parseArgs treats commit subcommand as native git passthrough and keeps --c
   const commandParsed = parseArgs(["node", "gitxplain", "commit"]);
   assert.equal(commandParsed.nativeGitCommand, true);
   assert.deepEqual(commandParsed.nativeGitArgs, ["commit"]);
-  assert.equal(commandParsed.commitCommand, false);
   assert.equal(commandParsed.commitRef, null);
 
   const flagParsed = parseArgs(["node", "gitxplain", "--commit", "--execute"]);
