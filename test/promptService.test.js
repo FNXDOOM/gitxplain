@@ -67,9 +67,11 @@ test("buildPrompt loads new prompt modes", () => {
   const changelogPrompt = buildPrompt("changelog", commitData, { maxDiffLines: 20 }).prompt;
   const blamePrompt = buildPrompt("blame", commitData, { maxDiffLines: 20 }).prompt;
   const stashPrompt = buildPrompt("stash", commitData, { maxDiffLines: 20 }).prompt;
+  const conflictPrompt = buildPrompt("conflict", commitData, { maxDiffLines: 20 }).prompt;
 
   assert.match(refactorPrompt, /Review this change for refactoring opportunities/);
   assert.match(changelogPrompt, /Generate release notes in a conventional-changelog style/);
   assert.match(blamePrompt, /Analyze this git blame report for a file/);
   assert.match(stashPrompt, /Explain the contents of this Git stash entry/);
+  assert.match(conflictPrompt, /You are helping resolve unresolved Git merge conflicts/);
 });

@@ -135,6 +135,14 @@ test("parseArgs handles blame mode with a file path", () => {
   assert.equal(parsed.format, "markdown");
 });
 
+test("parseArgs handles conflict mode", () => {
+  const parsed = parseArgs(["node", "gitxplain", "--conflict", "--diff", "src/auth.js"]);
+
+  assert.equal(parsed.mode, "conflict");
+  assert.equal(parsed.diffFile, "src/auth.js");
+  assert.equal(parsed.commitRef, null);
+});
+
 test("parseArgs handles stash mode with an explicit stash ref", () => {
   const parsed = parseArgs(["node", "gitxplain", "--stash", "stash@{2}", "--diff", "cli/index.js"]);
 
