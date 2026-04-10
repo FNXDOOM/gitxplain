@@ -1,0 +1,34 @@
+Explain the contents of this Git stash entry.
+
+Context:
+- This stash may include staged work, unstaged work, or both.
+- Focus on what work is preserved here, why it may have been stashed, and what to watch for before applying it.
+
+Stash Message:
+{{commit_message}}
+
+Files Changed:
+{{files_changed}}
+
+Stats:
+{{stats}}
+
+Change Hints:
+{{change_hints}}
+
+Diff:
+{{diff}}
+
+Return:
+
+1. Summary:
+- Explain what work is stored in the stash
+
+2. Likely Intent:
+- Explain why a developer might have stashed these changes
+
+3. Key Changes:
+- Summarize the important code or file-level changes
+
+4. Reapply Notes:
+- Mention any cautions, missing context, or likely conflicts to watch for when applying the stash
