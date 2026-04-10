@@ -88,10 +88,20 @@ export function runGitCommandUnchecked(args, cwd) {
 }
 
 export function listGitSubcommands() {
-  const output = execFileSync("git", ["help", "-a"], {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"]
-  });
+  let output;
+  try {
+    output = execFileSync("git", ["help", "-a"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      throw new Error("git is not installed or not available in PATH.");
+    }
+
+    const stderr = error.stderr?.toString().trim();
+    throw new Error(stderr || "Unable to list git subcommands.");
+  }
 
   return new Set(
     output
