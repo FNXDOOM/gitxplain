@@ -289,6 +289,36 @@ export function listTags(cwd) {
     .filter(Boolean);
 }
 
+export function listTagTargets(cwd) {
+  const result = runGitCommandUnchecked(["show-ref", "--tags", "-d"], cwd);
+  if (result.exitCode !== 0) {
+    return [];
+  }
+
+  const output = result.stdout;
+  const tagTargets = new Map();
+
+  for (const line of output.split("\n").map((entry) => entry.trim()).filter(Boolean)) {
+    const [sha, ref] = line.split(" ");
+    if (!sha || !ref?.startsWith("refs/tags/")) {
+      continue;
+    }
+
+    const rawTagName = ref.slice("refs/tags/".length);
+    const isDereferenced = rawTagName.endsWith("^{}");
+    const tagName = isDereferenced ? rawTagName.slice(0, -3) : rawTagName;
+    const existing = tagTargets.get(tagName) ?? {};
+
+    tagTargets.set(tagName, {
+      tagName,
+      tagSha: isDereferenced ? existing.tagSha ?? null : sha,
+      targetSha: isDereferenced ? sha : existing.targetSha ?? sha
+    });
+  }
+
+  return [...tagTargets.values()];
+}
+
 export function hasStagedChanges(cwd) {
   const result = runGitCommandUnchecked(["diff", "--cached", "--quiet"], cwd);
 
