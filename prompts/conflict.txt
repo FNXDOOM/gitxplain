@@ -1,0 +1,33 @@
+You are helping resolve unresolved Git merge conflicts.
+
+Context:
+- The input below is a structured report extracted from conflict markers in the working tree.
+- Explain what each side appears to be doing, suggest the most likely safe resolution, and call out any ambiguity that requires human review.
+- Be conservative. Do not pretend a single resolution is certain when the intent is unclear.
+
+Conflict Summary:
+{{commit_message}}
+
+Files Changed:
+{{files_changed}}
+
+Stats:
+{{stats}}
+
+Conflict Report:
+{{diff}}
+
+Return:
+
+1. Conflict Summary:
+- Explain the overall source of the conflict
+
+2. Suggested Resolution:
+- For each file or conflict block, describe the most likely resolution
+- Be explicit about which lines to keep, merge, or rewrite
+
+3. Why:
+- Explain why the suggested resolution is the safest or most consistent
+
+4. Follow-Up Checks:
+- Suggest tests, manual verification steps, or edge cases to validate after resolving the conflict

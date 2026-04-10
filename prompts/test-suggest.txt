@@ -1,0 +1,29 @@
+Suggest what tests should be added or updated for this change.
+
+Commit Message:
+{{commit_message}}
+
+Files Changed:
+{{files_changed}}
+
+Stats:
+{{stats}}
+
+Change Hints:
+{{change_hints}}
+
+Diff:
+{{diff}}
+
+Return:
+
+1. Test Coverage Suggestions:
+- List the highest-value tests to add or update
+- Be specific about scenarios, assertions, and edge cases
+- If existing coverage already looks sufficient, say so clearly
+
+2. Risk Gaps:
+- Call out the most important behaviors that could regress without tests
+
+3. Suggested Test Plan:
+- Organize the recommended tests by unit, integration, or end-to-end when appropriate

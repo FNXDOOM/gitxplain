@@ -1,6 +1,56 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+
+const ENV_CONFIG_KEYS = new Set([
+  "LLM_PROVIDER",
+  "LLM_MODEL",
+  "OPENAI_API_KEY",
+  "OPENAI_MODEL",
+  "OPENAI_BASE_URL",
+  "GROQ_API_KEY",
+  "GROQ_MODEL",
+  "GROQ_BASE_URL",
+  "OPENROUTER_API_KEY",
+  "OPENROUTER_MODEL",
+  "OPENROUTER_BASE_URL",
+  "OPENROUTER_SITE_URL",
+  "OPENROUTER_APP_NAME",
+  "GEMINI_API_KEY",
+  "GEMINI_MODEL",
+  "GEMINI_BASE_URL",
+  "OLLAMA_API_KEY",
+  "OLLAMA_MODEL",
+  "OLLAMA_BASE_URL",
+  "CHUTES_API_KEY",
+  "CHUTES_MODEL",
+  "CHUTES_BASE_URL",
+  "ANTHROPIC_API_KEY",
+  "ANTHROPIC_MODEL",
+  "ANTHROPIC_BASE_URL",
+  "MISTRAL_API_KEY",
+  "MISTRAL_MODEL",
+  "MISTRAL_BASE_URL",
+  "AZURE_OPENAI_API_KEY",
+  "AZURE_OPENAI_MODEL",
+  "AZURE_OPENAI_BASE_URL",
+  "AZURE_OPENAI_DEPLOYMENT",
+  "AZURE_OPENAI_API_VERSION",
+  "LLM_INPUT_COST_PER_MTOK",
+  "LLM_OUTPUT_COST_PER_MTOK"
+]);
+
+const PROVIDER_API_KEY_FIELDS = {
+  openai: "OPENAI_API_KEY",
+  groq: "GROQ_API_KEY",
+  openrouter: "OPENROUTER_API_KEY",
+  gemini: "GEMINI_API_KEY",
+  ollama: "OLLAMA_API_KEY",
+  chutes: "CHUTES_API_KEY",
+  anthropic: "ANTHROPIC_API_KEY",
+  mistral: "MISTRAL_API_KEY",
+  "azure-openai": "AZURE_OPENAI_API_KEY"
+};
 
 function readJsonConfig(filePath) {
   if (!existsSync(filePath)) {
@@ -14,9 +64,16 @@ function readJsonConfig(filePath) {
   }
 }
 
+export function getUserConfigPath() {
+  return path.join(os.homedir(), ".gitxplain", "config.json");
+}
+
+export function loadUserConfig() {
+  return readJsonConfig(getUserConfigPath());
+}
+
 export function loadConfig(cwd) {
-  const homeDir = os.homedir();
-  const userConfigPath = path.join(homeDir, ".gitxplain", "config.json");
+  const userConfigPath = getUserConfigPath();
   const projectConfigPath = path.join(cwd, ".gitxplainrc");
   const projectJsonConfigPath = path.join(cwd, ".gitxplainrc.json");
 
@@ -25,4 +82,35 @@ export function loadConfig(cwd) {
     ...readJsonConfig(projectConfigPath),
     ...readJsonConfig(projectJsonConfigPath)
   };
+}
+
+export function applyConfigEnvironment(config) {
+  for (const [key, value] of Object.entries(config)) {
+    if (!ENV_CONFIG_KEYS.has(key)) {
+      continue;
+    }
+
+    if (typeof value === "string" && value !== "" && !process.env[key]) {
+      process.env[key] = value;
+    }
+  }
+}
+
+export function getProviderApiKeyField(provider) {
+  const normalized = provider?.toLowerCase();
+  return normalized ? PROVIDER_API_KEY_FIELDS[normalized] ?? null : null;
+}
+
+export function writeUserConfig(nextConfig) {
+  const configPath = getUserConfigPath();
+  mkdirSync(path.dirname(configPath), { recursive: true });
+  writeFileSync(configPath, `${JSON.stringify(nextConfig, null, 2)}\n`, "utf8");
+  return configPath;
+}
+
+export function updateUserConfig(updates) {
+  const currentConfig = loadUserConfig();
+  const nextConfig = { ...currentConfig, ...updates };
+  const configPath = writeUserConfig(nextConfig);
+  return { configPath, config: nextConfig };
 }

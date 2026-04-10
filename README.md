@@ -10,15 +10,26 @@ Supported providers:
 - Gemini
 - Ollama
 - Chutes AI
+- Anthropic
+- Mistral
+- Azure OpenAI
 
 ## Features
 
 - Explains what a commit does, why it exists, and how the fix works
 - Supports focused output modes like summary, issue, fix, impact, review, security, and line-by-line walkthroughs
+- Supports blame summaries, changelog drafting, PR description drafting, refactor suggestions, and test suggestion modes
+- Supports stash explanation and single-file diff deep dives
+- Supports merge conflict analysis with suggested resolutions
+- Supports cumulative token usage tracking and optional estimated cost reporting
+- Supports interactive split-plan review before history is rewritten
 - Supports AI-assisted commit splitting plans, with optional execution for the latest commit
 - Supports release-branch merge previews driven by detected version bumps in diffs
+- Supports automatic release tagging driven by the same version-bump detection used for release merges
+- Supports release health status checks that show missing tags, unmerged version bumps, branch drift, and next steps
 - Supports AI-assisted commit planning for uncommitted working tree changes
-- Supports quick repository log output for recent history inspection
+- Supports quick repository log output for full history inspection
+- Supports repository-aware CI/CD workflow generation for GitHub Actions, GitLab CI, CircleCI, and Bitbucket Pipelines
 - Supports single commits, commit ranges, and branch-vs-base comparisons
 - Truncates oversized diffs before sending them to the model and reports that truncation
 - Streams output for supported providers
@@ -26,7 +37,6 @@ Supported providers:
 - Supports plain, JSON, Markdown, and HTML output
 - Supports clipboard copy, verbosity controls, and hook installation
 - Supports project-level and user-level config files
-- Falls back to an interactive prompt when no analysis flag is supplied
 - Returns plain text or JSON output
 - Uses native Node APIs only, so the MVP has no runtime dependencies
 
@@ -36,7 +46,7 @@ Supported providers:
 - A Git repository in your current working directory
 - An API key for your chosen provider, or a local Ollama instance
 
-Optional environment variables:
+Optional advanced environment variables:
 
 - `LLM_PROVIDER` default: `openai`
 - `LLM_MODEL` optional shared model override
@@ -52,7 +62,7 @@ Optional environment variables:
 Optional config files:
 
 - Project: `.gitxplainrc` or `.gitxplainrc.json`
-- User: `~/.gitxplain/config.json`
+- User: `~/.gitxplain/config.json` on macOS/Linux, or `%USERPROFILE%\.gitxplain\config.json` on Windows
 
 You can start from:
 
@@ -62,58 +72,439 @@ cp .env.example .env
 
 ## Usage
 
+Show the built-in command reference.
+
 ```bash
-gitxplain help
-gitxplain commit
-gitxplain --commit
-gitxplain merge
-gitxplain --merge
-gitxplain log --log
-gitxplain <commit-id>
-gitxplain <commit-id> --summary
-gitxplain <commit-id> --issues
-gitxplain <commit-id> --fix
-gitxplain <commit-id> --impact
-gitxplain <commit-id> --full
-gitxplain <commit-id> --lines
-gitxplain <commit-id> --review
-gitxplain <commit-id> --security
-gitxplain <commit-id> --split
-gitxplain --commit --execute
-gitxplain merge
-gitxplain --merge --execute
-gitxplain <commit-id> --json
-gitxplain <commit-id> --markdown
-gitxplain <commit-id> --html
-gitxplain <commit-id> --stream
-gitxplain <commit-id> --clipboard
-gitxplain <commit-id> --verbose
-gitxplain <commit-id> --quiet
-gitxplain log --log
-gitxplain <start>..<end> --markdown
-gitxplain --branch main --review
-gitxplain --pr origin/main --security
-gitxplain install-hook
-gitxplain <commit-id> --provider openrouter --model anthropic/claude-3.7-sonnet
-gitxplain <commit-id> --provider chutes --model deepseek-ai/DeepSeek-V3-0324
-gitxplain <commit-id> --split --execute
+gitxplain --help
 ```
 
-Examples:
+Inspect cache usage or clear cached responses.
 
 ```bash
-npm start -- HEAD~1 --summary
-npm start -- commit
-npm start -- merge
-npm start -- log --log
-npm start -- a1b2c3d --full
-npm start -- HEAD~1 --lines
-npm start -- HEAD~5..HEAD --markdown
-npm start -- --branch main --review
-npm start -- HEAD~1 --provider groq --model llama-3.3-70b-versatile
-npm start -- HEAD~1 --provider gemini --model gemini-2.5-flash
-npm start -- HEAD~1 --provider chutes --model deepseek-ai/DeepSeek-V3-0324
-npm start -- HEAD --split --execute
+gitxplain cache stats
+gitxplain cache clear
+```
+
+Show cumulative token usage and estimated cost totals.
+
+```bash
+gitxplain --cost
+```
+
+Save the default AI provider.
+
+```bash
+gitxplain config set provider <name>
+```
+
+Save the API key for a provider.
+
+```bash
+gitxplain config set api-key <value> [--provider <name>]
+```
+
+Print one saved config value, or all of them.
+
+```bash
+gitxplain config get [key]
+```
+
+List saved user config values.
+
+```bash
+gitxplain config list
+```
+
+Analyze a single commit.
+
+```bash
+gitxplain <commit-id> [options]
+```
+
+Analyze a commit range.
+
+```bash
+gitxplain <start>..<end> [options]
+```
+
+Compare the current branch to a base branch.
+
+```bash
+gitxplain --branch [base-ref] [options]
+```
+
+Compare the current branch like a PR.
+
+```bash
+gitxplain --pr [base-ref] [options]
+```
+
+Plan commits for uncommitted working tree changes.
+
+```bash
+gitxplain --commit
+```
+
+Show release branch health and next steps.
+
+```bash
+gitxplain --release [status]
+```
+
+Preview or execute a release merge.
+
+```bash
+gitxplain --merge
+```
+
+Preview or create release tags.
+
+```bash
+gitxplain --tag
+```
+
+Explain the latest stash, or a specific stash entry.
+
+```bash
+gitxplain --stash
+gitxplain --stash stash@{2}
+```
+
+Print repository log output.
+
+```bash
+gitxplain --log
+```
+
+Print repository status output.
+
+```bash
+gitxplain --status
+```
+
+Detect and generate CI/CD workflow files.
+
+```bash
+gitxplain --pipeline
+```
+
+Analyze unresolved merge conflicts in the working tree.
+
+```bash
+gitxplain --conflict
+gitxplain --conflict --diff src/auth.js
+```
+
+Install a git hook for commit, merge, or push workflows.
+
+```bash
+gitxplain install-hook
+gitxplain install-hook post-merge
+gitxplain install-hook pre-push
+```
+
+Analysis:
+
+Generate a one-line summary.
+
+```bash
+--summary
+```
+
+Focus on the issue being fixed.
+
+```bash
+--issues
+```
+
+Explain the fix in simple terms.
+
+```bash
+--fix
+```
+
+Explain behavior changes before vs after.
+
+```bash
+--impact
+```
+
+Generate the full structured analysis.
+
+```bash
+--full
+```
+
+Walk through the changed code file by file.
+
+```bash
+--lines
+```
+
+Generate review findings and risks.
+
+```bash
+--review
+```
+
+Focus on security-relevant changes.
+
+```bash
+--security
+```
+
+Suggest refactoring follow-ups.
+
+```bash
+--refactor
+```
+
+Suggest tests to add or update.
+
+```bash
+--test-suggest
+```
+
+Generate a PR description.
+
+```bash
+--pr-description
+```
+
+Generate changelog-style notes.
+
+```bash
+--changelog
+```
+
+Analyze file ownership with git blame.
+
+```bash
+--blame <file>
+```
+
+Suggest resolutions for unresolved merge conflicts.
+
+```bash
+--conflict
+```
+
+Focus analysis on one changed file.
+
+```bash
+--diff <file>
+```
+
+Propose splitting a commit into smaller commits.
+
+```bash
+--split
+```
+
+Propose commits for current working tree changes.
+
+```bash
+--commit
+```
+
+Apply a split, commit, merge, or tag plan.
+
+```bash
+--execute
+```
+
+Preview a plan without applying it.
+
+```bash
+--dry-run
+```
+
+Review or edit a split plan before execution.
+
+```bash
+--interactive
+```
+
+Release:
+
+Show release status details.
+
+```bash
+--release [status]
+```
+
+Preview or apply a merge into the release branch.
+
+```bash
+--merge
+```
+
+Preview or create release tags from version bumps.
+
+```bash
+--tag
+```
+
+Repo:
+
+Print the current repository log.
+
+```bash
+--log
+```
+
+Print the current working tree status.
+
+```bash
+--status
+```
+
+Inspect the repo and create CI/CD workflow files.
+
+```bash
+--pipeline
+```
+
+Quick Actions:
+
+Persist provider, model, and API key settings.
+
+```bash
+config
+```
+
+Stage one or more files.
+
+```bash
+add
+```
+
+Unstage one or more files.
+
+```bash
+remove
+```
+
+Hard reset the repository to HEAD.
+
+```bash
+remove hard
+```
+
+Delete one or more files from the working tree.
+
+```bash
+del
+```
+
+Soft reset `HEAD~1` and keep your changes.
+
+```bash
+bin
+```
+
+Pop a stash entry.
+
+```bash
+pop
+```
+
+Run `git pull`.
+
+```bash
+pull
+```
+
+Run `git push`.
+
+```bash
+push
+```
+
+Install the `gitxplain` hook.
+
+```bash
+install-hook
+```
+
+Pass through to native Git commands.
+
+```bash
+git
+```
+
+Output:
+
+Override the configured provider for one command.
+
+```bash
+--provider <name>
+```
+
+Override the configured model for one command.
+
+```bash
+--model <name>
+```
+
+Return JSON output.
+
+```bash
+--json
+```
+
+Return Markdown output.
+
+```bash
+--markdown
+```
+
+Return HTML output.
+
+```bash
+--html
+```
+
+Reduce extra console output.
+
+```bash
+--quiet
+```
+
+Show extra response metadata.
+
+```bash
+--verbose
+```
+
+Copy the final output to the clipboard.
+
+```bash
+--clipboard
+```
+
+Stream model output as it arrives.
+
+```bash
+--stream
+```
+
+Bypass cached responses for one command.
+
+```bash
+--no-cache
+```
+
+Show cumulative token usage and estimated cost totals.
+
+```bash
+--cost
+```
+
+Limit diff size before sending it to the model.
+
+```bash
+--max-diff-lines <n>
 ```
 
 ## Running The CLI
@@ -121,34 +512,37 @@ npm start -- HEAD --split --execute
 To use the actual `gitxplain` command directly:
 
 ```bash
-cd /home/guru/Dev/gitxplain
 npm link
 ```
+
+Run that from the repository root. `npm link` works on Windows, macOS, and Linux, though it may require elevated privileges depending on your Node/npm install prefix.
 
 Then from any Git repository:
 
 ```bash
-gitxplain help
+gitxplain --help
 gitxplain HEAD~1 --full
 gitxplain a1b2c3d --summary
 gitxplain HEAD~1 --lines
 gitxplain HEAD~5..HEAD --markdown
 gitxplain --branch main --review
+gitxplain --branch main --pr-description
+gitxplain HEAD~10..HEAD --changelog
+gitxplain HEAD --refactor
+gitxplain HEAD --test-suggest
+gitxplain --blame cli/index.js
+gitxplain --conflict
+gitxplain --stash
+gitxplain HEAD~5..HEAD --lines --diff cli/index.js
+gitxplain --cost
+gitxplain HEAD --split --interactive --execute
+gitxplain install-hook post-merge
 ```
-
-The `gitxplain help` command also prints quick API-key setup examples for:
-
-- OpenAI
-- Groq
-- OpenRouter
-- Gemini
-- Ollama
-- Chutes AI
 
 If you do not want to link it globally, you can still run it locally:
 
 ```bash
-node /home/guru/Dev/gitxplain/cli/index.js HEAD~1 --full
+node ./cli/index.js HEAD~1 --full
 ```
 
 ## Output Modes
@@ -161,28 +555,78 @@ node /home/guru/Dev/gitxplain/cli/index.js HEAD~1 --full
 - `--lines`: file-by-file, line-by-line walkthrough of the changed code
 - `--review`: code review findings with actionable suggestions
 - `--security`: security-focused analysis of the change
+- `--refactor`: suggest maintainability-focused refactors visible in the change
+- `--test-suggest`: suggest the most valuable tests to add or update
+- `--pr-description`: draft a ready-to-paste pull request description
+- `--changelog`: generate changelog-style release notes from the change set
+- `--blame <file>`: summarize ownership and change history for one file using `git blame`
+- `--conflict`: inspect unresolved merge conflicts and suggest likely resolutions
+- `--stash [ref]`: explain what is stored in a stash entry, defaulting to `stash@{0}`
+- `--diff <file>`: focus commit or range analysis on a single file
 - `--split`: propose how to split a commit into multiple atomic commits
+- `--interactive`: review or edit a split plan before executing it
+- `--cost`: show cumulative token usage and estimated cost totals
 - `--merge`: preview or execute a merge into the `release` branch based on detected version bumps
+- `--tag`: preview or create release tags from the same detected version windows
+- `--release [status]`: inspect release branch health, missing tags, source-vs-release drift, and the next recommended action
 - `--commit`: propose commits for current uncommitted changes
-- `--log`: print recent Git log entries for the current repository
+- `--log`: print Git log entries for the current repository
+- `--status`: print Git working tree status for the current repository
+- `--pipeline`: inspect the current repository and generate GitHub Actions, GitLab CI, CircleCI, or Bitbucket Pipelines config
 - `--execute`: apply a proposed split by rewriting history
 - `--dry-run`: preview the split or commit plan without applying it
 - `--json`: return structured JSON instead of formatted text
 - `--markdown`: return Markdown output
 - `--html`: return HTML output
 
-If no analysis flag is supplied, the CLI asks what kind of explanation you want.
-
 ## Repository Log
 
 Print recent log entries from the current repository:
 
 ```bash
-gitxplain log
 gitxplain --log
 ```
 
-Both forms print the latest commits in a compact one-line format using the current repository, without calling the LLM.
+This prints the repository history in a compact one-line format using the current repository, without calling the LLM.
+
+## Quick Actions
+
+Run a few common Git actions directly through `gitxplain`:
+
+```bash
+gitxplain --status
+gitxplain cache stats
+gitxplain cache clear
+gitxplain --cost
+gitxplain add README.md
+gitxplain remove README.md
+gitxplain remove hard
+gitxplain del scratch.txt
+gitxplain bin
+gitxplain pop
+gitxplain pop 2
+gitxplain pull
+gitxplain pull origin main
+gitxplain push
+gitxplain push origin main
+```
+
+For native Git commands that do not have a custom `gitxplain` workflow, use them directly:
+
+```bash
+gitxplain branch -a
+gitxplain checkout -b feature/demo
+gitxplain rebase origin/main
+gitxplain worktree list
+```
+
+If you want to force native Git for a reserved custom command name, use the `git` wrapper:
+
+```bash
+gitxplain git commit -m "native commit message"
+gitxplain git merge feature/demo
+gitxplain git tag -a v1.2.3 -m "release"
+```
 
 ## Comparison Modes
 
@@ -221,13 +665,19 @@ Actually split the current `HEAD` commit into smaller commits:
 gitxplain HEAD --split --execute
 ```
 
+Review the plan interactively before executing it:
+
+```bash
+gitxplain HEAD --split --interactive --execute
+```
+
 Use a specific provider for the analysis:
 
 ```bash
 gitxplain HEAD --split --provider gemini
 ```
 
-`--split` asks the model for a plan first. By default this is a dry run and only prints the proposed commit breakdown. Adding `--execute` rewrites Git history by undoing the current `HEAD` commit and recreating it as multiple commits in the suggested order.
+`--split` asks the model for a plan first. By default this is a dry run and only prints the proposed commit breakdown. Adding `--execute` rewrites Git history by undoing the current `HEAD` commit and recreating it as multiple commits in the suggested order. Adding `--interactive` lets you keep, edit, skip, or abort individual split groups before the rewrite happens.
 
 Warning: `--split --execute` rewrites history. If the commit was already pushed, you may need to force-push after reviewing the new commit stack. For safety, execution only supports splitting the current `HEAD` commit and requires a clean working tree.
 
@@ -236,7 +686,6 @@ Warning: `--split --execute` rewrites history. If the commit was already pushed,
 Preview the release merge plan for the current branch:
 
 ```bash
-gitxplain merge
 gitxplain --merge
 ```
 
@@ -246,14 +695,31 @@ Actually merge the current branch into the `release` branch:
 gitxplain --merge --execute
 ```
 
-This command scans commits on your current branch after the branch split point and uses semantic version bumps as release checkpoints. If `release` already contains an earlier version bump, it starts after that released version and promotes everything after it up to `HEAD`, even when the newest commits do not contain another bump yet. If no prior released version is found, it promotes everything from the first branch commit. On execution, the selected range is applied on `release` and committed as a single release commit.
+This command scans commits on your current branch after the branch split point and uses version-file diffs as release checkpoints. Each time a commit changes the version, that closes a release window. On the `release` branch, the command creates commits named `release <version>`. If no release versions have been promoted yet, it creates release commits for all detected versions in order. If some release versions already exist on `release`, it skips those and creates only the latest unreleased `release <version>` commit.
+
+## Release Tagging
+
+Preview the release tags for the current branch:
+
+```bash
+gitxplain --tag
+gitxplore --tag
+```
+
+Actually create the tags:
+
+```bash
+gitxplain --tag --execute
+gitxplore --tag --execute
+```
+
+This command scans the full history of your current branch, detects version bumps from version-file diffs, and maps each untagged detected version to the last commit in that version window. It works independently from the `merge` workflow and does not require a `release` branch. By default it creates annotated tags named exactly after the detected version, such as `1.2.3`.
 
 ## Commit Working Tree
 
 Preview how the current uncommitted changes should be committed:
 
 ```bash
-gitxplain commit
 gitxplain --commit
 ```
 
@@ -289,7 +755,16 @@ Example `.gitxplainrc`:
 
 CLI flags still override config values for a single command.
 
-## Clipboard, Streaming, And Hooks
+You can also save provider settings permanently with the CLI:
+
+```bash
+gitxplain config set provider openai
+gitxplain config set api-key your_key
+gitxplain config set model gpt-4.1-mini
+gitxplain config list
+```
+
+## Clipboard, Streaming, Cost, And Hooks
 
 Copy the final output to your clipboard:
 
@@ -303,56 +778,95 @@ Stream long responses as they arrive:
 gitxplain HEAD~1 --full --stream
 ```
 
+Show cumulative usage and estimated cost totals:
+
+```bash
+gitxplain --cost
+```
+
 Install a post-commit hook that saves a Markdown explanation under `.git/gitxplain/last-explanation.md`:
 
 ```bash
 gitxplain install-hook
 ```
 
+Install a post-merge hook that explains the new `HEAD` after merges:
+
+```bash
+gitxplain install-hook post-merge
+```
+
+Install a pre-push hook that runs a security-oriented review:
+
+```bash
+gitxplain install-hook pre-push
+```
+
 ## Provider Setup
 
-OpenAI:
+Recommended persistent setup:
 
 ```bash
-export LLM_PROVIDER=openai
-export OPENAI_API_KEY=your_key
+gitxplain config set provider openai
+gitxplain config set api-key your_key
 ```
 
-Groq:
+You can also save a default model:
 
 ```bash
-export LLM_PROVIDER=groq
-export GROQ_API_KEY=your_key
+gitxplain config set model gpt-4.1-mini
 ```
 
-OpenRouter:
+You can switch providers later:
 
 ```bash
-export LLM_PROVIDER=openrouter
-export OPENROUTER_API_KEY=your_key
+gitxplain config set provider groq
+gitxplain config set api-key your_key
 ```
 
-Gemini:
+Additional supported providers:
 
 ```bash
-export LLM_PROVIDER=gemini
-export GEMINI_API_KEY=your_key
+gitxplain config set provider anthropic
+gitxplain config set api-key your_key
+
+gitxplain config set provider mistral
+gitxplain config set api-key your_key
+
+gitxplain config set provider azure-openai
+gitxplain config set api-key your_key
 ```
 
-Ollama:
+Azure OpenAI also requires endpoint configuration:
 
 ```bash
-export LLM_PROVIDER=ollama
-export OLLAMA_MODEL=llama3.2
+export AZURE_OPENAI_BASE_URL="https://your-resource.openai.azure.com"
+export AZURE_OPENAI_DEPLOYMENT="your-deployment-name"
+export AZURE_OPENAI_API_VERSION="2024-10-21"
 ```
 
-Chutes AI:
+Optional token pricing env vars for estimated cost tracking:
 
 ```bash
-export LLM_PROVIDER=chutes
-export CHUTES_API_KEY=your_key
-export CHUTES_MODEL=deepseek-ai/DeepSeek-V3-0324
+export OPENAI_INPUT_COST_PER_MTOK="0.15"
+export OPENAI_OUTPUT_COST_PER_MTOK="0.60"
 ```
+
+Or use generic pricing defaults across providers:
+
+```bash
+export LLM_INPUT_COST_PER_MTOK="0.15"
+export LLM_OUTPUT_COST_PER_MTOK="0.60"
+```
+
+If you want to inspect what is saved:
+
+```bash
+gitxplain config list
+gitxplain config get provider
+```
+
+Saved user settings live in `~/.gitxplain/config.json` on macOS/Linux, or `%USERPROFILE%\.gitxplain\config.json` on Windows.
 
 ## Development
 
@@ -366,3 +880,5 @@ To make the command globally available during local development:
 ```bash
 npm link
 ```
+
+Run this from the repository root. On some systems, you may need an elevated shell depending on where npm installs global links.

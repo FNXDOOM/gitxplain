@@ -1,0 +1,40 @@
+Write a pull request description for this change set.
+
+Context:
+- This may be a single commit, a commit range, or a branch comparison.
+- The result should be ready to paste into GitHub or GitLab.
+- Be accurate and concise. Do not invent testing or screenshots that are not evidenced by the diff.
+
+Commit Message:
+{{commit_message}}
+
+Files Changed:
+{{files_changed}}
+
+Stats:
+{{stats}}
+
+Change Hints:
+{{change_hints}}
+
+Diff:
+{{diff}}
+
+Return:
+
+## Summary
+- Short bullets describing the main changes
+
+## Why
+- Why this PR exists
+
+## Testing
+- Mention visible testing evidence from the diff if any
+- If no testing evidence is visible, say "Not specified in diff"
+
+## Risks
+- Briefly describe rollout, compatibility, or review risks
+
+## Screenshots
+- If the diff suggests UI work, include "Screenshots: Needed"
+- Otherwise include "Screenshots: Not needed"

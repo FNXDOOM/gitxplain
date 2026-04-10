@@ -1,4 +1,3 @@
-import process from "node:process";
 import {
   deletePaths,
   fetchWorkingTreeData,
@@ -18,29 +17,10 @@ import {
   resolveTreeSha,
   writeCurrentIndexTree
 } from "./gitService.js";
-
-const ANSI = {
-  reset: "\u001b[0m",
-  bold: "\u001b[1m",
-  cyan: "\u001b[36m",
-  yellow: "\u001b[33m",
-  green: "\u001b[32m"
-};
-
-function supportsColor() {
-  return Boolean(process.stdout?.isTTY) && process.env.NO_COLOR == null;
-}
-
-function colorize(text, color) {
-  if (!supportsColor()) {
-    return text;
-  }
-
-  return `${color}${text}${ANSI.reset}`;
-}
+import { ANSI, colorize } from "./colorSupport.js";
 
 function extractJsonPayload(explanation) {
-  const fencedMatch = explanation.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  const fencedMatch = explanation.match(/```[A-Za-z0-9_-]*\s*([\s\S]*?)\s*```/);
   if (fencedMatch) {
     return fencedMatch[1].trim();
   }
@@ -57,6 +37,104 @@ function extractJsonPayload(explanation) {
 
 function isNonEmptyString(value) {
   return typeof value === "string" && value.trim() !== "";
+}
+
+function stripMarkdown(text) {
+  return text
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/__([^_]+)__/g, "$1")
+    .replace(/\*([^*]+)\*/g, "$1")
+    .replace(/_([^_]+)_/g, "$1")
+    .trim();
+}
+
+function parseFilesLine(value) {
+  return value
+    .split(/[,\n]/)
+    .map((file) => stripMarkdown(file).trim())
+    .filter(Boolean);
+}
+
+function parseTextCommitPlan(explanation) {
+  const lines = explanation.split("\n").map((line) => line.trimEnd());
+  const commits = [];
+  let workingTreeSummary = null;
+  let reasonToCommit = null;
+  let currentCommit = null;
+
+  const pushCurrentCommit = () => {
+    if (!currentCommit) {
+      return;
+    }
+
+    commits.push({
+      order: currentCommit.order,
+      message: currentCommit.message,
+      files: currentCommit.files,
+      description: currentCommit.description
+    });
+    currentCommit = null;
+  };
+
+  for (const rawLine of lines) {
+    const line = stripMarkdown(rawLine.trim());
+    if (line === "") {
+      continue;
+    }
+
+    if (/^(working tree summary|summary)\s*:/i.test(line)) {
+      workingTreeSummary = line.replace(/^(working tree summary|summary)\s*:/i, "").trim();
+      continue;
+    }
+
+    if (/^(reason to commit|reason)\s*:/i.test(line)) {
+      reasonToCommit = line.replace(/^(reason to commit|reason)\s*:/i, "").trim() || null;
+      continue;
+    }
+
+    const commitMatch = line.match(/^(?:[-*]\s*)?(\d+)\.\s+(.+)$/);
+    if (commitMatch) {
+      pushCurrentCommit();
+      currentCommit = {
+        order: Number.parseInt(commitMatch[1], 10),
+        message: commitMatch[2].trim(),
+        files: [],
+        description: ""
+      };
+      continue;
+    }
+
+    if (!currentCommit) {
+      continue;
+    }
+
+    if (/^files?\s*:/i.test(line)) {
+      currentCommit.files.push(...parseFilesLine(line.replace(/^files?\s*:/i, "")));
+      continue;
+    }
+
+    if (/^(why|description)\s*:/i.test(line)) {
+      currentCommit.description = line.replace(/^(why|description)\s*:/i, "").trim();
+      continue;
+    }
+
+    if (currentCommit.description) {
+      currentCommit.description = `${currentCommit.description} ${line}`.trim();
+    }
+  }
+
+  pushCurrentCommit();
+
+  if (!workingTreeSummary || commits.length === 0) {
+    throw new Error("Failed to parse commit plan: no JSON object found in model response.");
+  }
+
+  return {
+    working_tree_summary: workingTreeSummary,
+    reason_to_commit: reasonToCommit,
+    commits
+  };
 }
 
 function validateCommitEntry(entry, index) {
@@ -257,7 +335,11 @@ export function parseCommitPlan(explanation) {
   try {
     parsed = JSON.parse(extractJsonPayload(explanation));
   } catch (error) {
-    throw new Error(`Failed to parse commit plan JSON: ${error.message}`);
+    try {
+      parsed = parseTextCommitPlan(explanation);
+    } catch {
+      throw new Error(`Failed to parse commit plan JSON: ${error.message}`);
+    }
   }
 
   if (typeof parsed !== "object" || parsed == null || Array.isArray(parsed)) {

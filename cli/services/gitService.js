@@ -1,25 +1,9 @@
-import { execFileSync } from "node:child_process";
-import { rmSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import os from "node:os";
+import { mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
-
-const ANSI = {
-  reset: "\u001b[0m",
-  green: "\u001b[32m",
-  red: "\u001b[31m"
-};
-
-function supportsColor() {
-  return Boolean(process.stdout?.isTTY) && process.env.NO_COLOR == null;
-}
-
-function colorize(text, color) {
-  if (!supportsColor()) {
-    return text;
-  }
-
-  return `${color}${text}${ANSI.reset}`;
-}
+import { ANSI, colorize } from "./colorSupport.js";
 
 export function runGitCommand(args, cwd) {
   try {
@@ -27,6 +11,38 @@ export function runGitCommand(args, cwd) {
       cwd,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"]
+    }).trim();
+  } catch (error) {
+    const stderr = error.stderr?.toString().trim();
+    throw new Error(stderr || `Git command failed: git ${args.join(" ")}`);
+  }
+}
+
+export function runGitCommandWithInput(args, cwd, input) {
+  try {
+    return execFileSync("git", args, {
+      cwd,
+      input,
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "pipe"]
+    }).trim();
+  } catch (error) {
+    const stderr = error.stderr?.toString().trim();
+    throw new Error(stderr || `Git command failed: git ${args.join(" ")}`);
+  }
+}
+
+export function runGitCommandWithInputAndEnv(args, cwd, input, env) {
+  try {
+    return execFileSync("git", args, {
+      cwd,
+      input,
+      env: {
+        ...process.env,
+        ...env
+      },
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "pipe"]
     }).trim();
   } catch (error) {
     const stderr = error.stderr?.toString().trim();
@@ -52,6 +68,43 @@ export function runGitCommandUnchecked(args, cwd) {
       exitCode: error.status ?? 1
     };
   }
+}
+
+export function listGitSubcommands() {
+  let output;
+  try {
+    output = execFileSync("git", ["help", "-a"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      throw new Error("git is not installed or not available in PATH.");
+    }
+
+    const stderr = error.stderr?.toString().trim();
+    throw new Error(stderr || "Unable to list git subcommands.");
+  }
+
+  return new Set(
+    output
+      .split("\n")
+      .map((line) => line.match(/^\s{3}([a-z0-9][a-z0-9-]*)\s{2,}/i)?.[1] ?? null)
+      .filter(Boolean)
+  );
+}
+
+export function runNativeGitPassthrough(args, cwd) {
+  const result = spawnSync("git", args, {
+    cwd,
+    stdio: "inherit"
+  });
+
+  if (result.error) {
+    throw result.error;
+  }
+
+  return result.status ?? 0;
 }
 
 export function isGitRepository(cwd) {
@@ -184,6 +237,81 @@ export function gitCommit(message, cwd) {
   return runGitCommand(["commit", "-m", message], cwd);
 }
 
+export function gitPush(cwd, remote = null, branch = null, runner = runGitCommand) {
+  const args = ["push"];
+
+  if (remote) {
+    args.push(remote);
+  }
+
+  if (branch) {
+    args.push(branch);
+  }
+
+  return runner(args, cwd);
+}
+
+export function gitPull(cwd, remote = null, branch = null, runner = runGitCommand) {
+  const args = ["pull"];
+
+  if (remote) {
+    args.push(remote);
+  }
+
+  if (branch) {
+    args.push(branch);
+  }
+
+  return runner(args, cwd);
+}
+
+
+export function gitCreateAnnotatedTag(tagName, ref, message, cwd) {
+  return runGitCommand(["tag", "-a", tagName, ref, "-m", message], cwd);
+}
+
+export function gitDeleteTag(tagName, cwd) {
+  return runGitCommand(["tag", "-d", tagName], cwd);
+}
+
+export function listTags(cwd) {
+  const output = runGitCommand(["tag", "--list"], cwd);
+  return output
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+export function listTagTargets(cwd) {
+  const result = runGitCommandUnchecked(["show-ref", "--tags", "-d"], cwd);
+  if (result.exitCode !== 0) {
+    return [];
+  }
+
+  const output = result.stdout;
+  const tagTargets = new Map();
+
+  for (const line of output.split("\n").map((entry) => entry.trim()).filter(Boolean)) {
+    const [sha, ref] = line.split(" ");
+    if (!sha || !ref?.startsWith("refs/tags/")) {
+      continue;
+    }
+
+    const rawTagName = ref.slice("refs/tags/".length);
+    const isDereferenced = rawTagName.endsWith("^{}");
+    const tagName = isDereferenced ? rawTagName.slice(0, -3) : rawTagName;
+    const existing = tagTargets.get(tagName) ?? {};
+
+    tagTargets.set(tagName, {
+      tagName,
+      tagSha: isDereferenced ? existing.tagSha ?? null : sha,
+      targetSha: isDereferenced ? sha : existing.targetSha ?? sha
+    });
+  }
+
+  return [...tagTargets.values()];
+}
+
 export function hasStagedChanges(cwd) {
   const result = runGitCommandUnchecked(["diff", "--cached", "--quiet"], cwd);
 
@@ -202,11 +330,14 @@ export function gitAddAll(cwd) {
   return runGitCommand(["add", "--all"], cwd);
 }
 
-export function getRepositoryLog(cwd, limit = 20, runner = runGitCommand) {
-  return runner(
-    ["log", `--max-count=${limit}`, "--date=short", "--pretty=format:%h %ad %an %s"],
-    cwd
-  );
+export function getRepositoryLog(cwd, limit = null, runner = runGitCommand) {
+  const args = ["log", "--date=short", "--pretty=format:%h %ad %an %s"];
+
+  if (limit != null) {
+    args.splice(1, 0, `--max-count=${limit}`);
+  }
+
+  return runner(args, cwd);
 }
 
 function describeStatusCode(code, area) {
@@ -307,6 +438,25 @@ export function getCommitParents(ref, cwd) {
     .filter(Boolean);
 }
 
+export function getCommitMetadata(ref, cwd) {
+  const output = runGitCommand(
+    ["show", "-s", "--format=%an%x1f%ae%x1f%aI%x1f%cn%x1f%ce%x1f%cI%x1f%B", ref],
+    cwd
+  );
+  const [authorName = "", authorEmail = "", authorDate = "", committerName = "", committerEmail = "", committerDate = "", ...messageParts] =
+    output.split("\u001f");
+
+  return {
+    authorName,
+    authorEmail,
+    authorDate,
+    committerName,
+    committerEmail,
+    committerDate,
+    message: messageParts.join("\u001f")
+  };
+}
+
 export function listCommitsAfter(baseRef, headRef, cwd) {
   const output = runGitCommand(["rev-list", "--reverse", `${baseRef}..${headRef}`], cwd);
   return output
@@ -315,8 +465,24 @@ export function listCommitsAfter(baseRef, headRef, cwd) {
     .filter(Boolean);
 }
 
+export function listCommitsAfterTopo(baseRef, headRef, cwd) {
+  const output = runGitCommand(["rev-list", "--reverse", "--topo-order", `${baseRef}..${headRef}`], cwd);
+  return output
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
 export function listBranchCommits(ref, cwd) {
   const output = runGitCommand(["rev-list", "--reverse", ref], cwd);
+  return output
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+export function listFilesInRef(ref, cwd) {
+  const output = runGitCommand(["ls-tree", "-r", "--name-only", ref], cwd);
   return output
     .split("\n")
     .map((line) => line.trim())
@@ -337,8 +503,8 @@ export function isAncestorCommit(ancestorRef, descendantRef, cwd) {
   throw new Error(result.stderr || "Unable to determine commit ancestry.");
 }
 
-export function gitResetHard(ref, cwd) {
-  return runGitCommand(["reset", "--hard", ref], cwd);
+export function gitResetHard(ref, cwd, runner = runGitCommand) {
+  return runner(["reset", "--hard", ref], cwd);
 }
 
 export function gitCherryPickNoCommit(ref, cwd) {
@@ -347,6 +513,10 @@ export function gitCherryPickNoCommit(ref, cwd) {
 
 export function gitCherryPick(ref, cwd) {
   return runGitCommand(["cherry-pick", ref], cwd);
+}
+
+export function gitCherryPickRecordSource(ref, cwd) {
+  return runGitCommand(["cherry-pick", "-x", ref], cwd);
 }
 
 export function gitMerge(ref, cwd, message = null) {
@@ -373,12 +543,94 @@ export function gitCheckout(ref, cwd) {
   return runGitCommand(["checkout", ref], cwd);
 }
 
+export function gitCheckoutDetached(ref, cwd) {
+  return runGitCommand(["checkout", "--detach", ref], cwd);
+}
+
+export function gitCreateBranch(branchName, startPoint, cwd) {
+  return runGitCommand(["branch", branchName, startPoint], cwd);
+}
+
 export function gitCheckoutNewBranch(branchName, startPoint, cwd) {
   return runGitCommand(["checkout", "-b", branchName, startPoint], cwd);
 }
 
+export function gitCheckoutOrphan(branchName, cwd) {
+  return runGitCommand(["checkout", "--orphan", branchName], cwd);
+}
+
 export function gitDeleteBranch(branchName, cwd) {
   return runGitCommand(["branch", "-D", branchName], cwd);
+}
+
+export function gitForceBranch(branchName, ref, cwd) {
+  return runGitCommand(["branch", "-f", branchName, ref], cwd);
+}
+
+export function gitRebaseRebaseMergesOnto(newBase, upstream, cwd, strategyOption = null) {
+  const args = ["rebase", "--rebase-merges"];
+
+  if (strategyOption) {
+    args.push("-X", strategyOption);
+  }
+
+  args.push("--onto", newBase, upstream);
+  return runGitCommand(args, cwd);
+}
+
+export function gitRebaseAbort(cwd) {
+  const result = runGitCommandUnchecked(["rebase", "--abort"], cwd);
+  return result.exitCode === 0;
+}
+
+export function gitRemoveCachedAll(cwd) {
+  return runGitCommand(["rm", "-r", "--cached", "--ignore-unmatch", "."], cwd);
+}
+
+export function createEmptyRootCommit(message, cwd) {
+  const emptyTree = runGitCommandWithInput(["mktree"], cwd, "");
+  return runGitCommand(["commit-tree", emptyTree, "-m", message], cwd);
+}
+
+export function createCommitFromTree(treeSha, parentShas, metadata, cwd) {
+  const args = ["commit-tree", treeSha];
+
+  for (const parentSha of parentShas) {
+    args.push("-p", parentSha);
+  }
+
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "gitxplain-commit-tree-"));
+  const messagePath = path.join(tempDir, "message.txt");
+
+  try {
+    writeFileSync(messagePath, metadata.message.endsWith("\n") ? metadata.message : `${metadata.message}\n`, "utf8");
+    args.push("-F", messagePath);
+
+    return execFileSync("git", args, {
+      cwd,
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: metadata.authorName,
+        GIT_AUTHOR_EMAIL: metadata.authorEmail,
+        GIT_AUTHOR_DATE: metadata.authorDate,
+        GIT_COMMITTER_NAME: metadata.committerName,
+        GIT_COMMITTER_EMAIL: metadata.committerEmail,
+        GIT_COMMITTER_DATE: metadata.committerDate
+      },
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"]
+    }).trim();
+  } catch (error) {
+    const stderr = error.stderr?.toString().trim();
+    throw new Error(stderr || `Git command failed: git ${args.join(" ")}`);
+  } finally {
+    try {
+      unlinkSync(messagePath);
+    } catch {}
+    try {
+      rmSync(tempDir, { recursive: true, force: true });
+    } catch {}
+  }
 }
 
 export function writeCurrentIndexTree(cwd) {
@@ -397,6 +649,28 @@ export function gitStashDrop(stashRef, cwd) {
   return runGitCommand(["stash", "drop", stashRef], cwd);
 }
 
+export function resolveStashRef(index = null) {
+  if (index == null) {
+    return "stash@{0}";
+  }
+
+  if (typeof index === "string" && /^stash@\{\d+\}$/.test(index.trim())) {
+    return index.trim();
+  }
+
+  const parsed = Number.parseInt(String(index), 10);
+  if (Number.isNaN(parsed) || parsed < 0) {
+    throw new Error(`Invalid stash index: ${index}`);
+  }
+
+  return `stash@{${parsed}}`;
+}
+
+export function gitStashPop(index, cwd) {
+  const stashRef = resolveStashRef(index);
+  return runGitCommand(["stash", "pop", "--index", stashRef], cwd);
+}
+
 export function getLatestStashRef(cwd) {
   const output = runGitCommand(["stash", "list", "--format=%gd"], cwd);
   return output.split("\n").map((line) => line.trim()).find(Boolean) ?? null;
@@ -413,6 +687,193 @@ function getUncheckedCommandOutput(args, cwd) {
 
 function parseUniqueFiles(...groups) {
   return [...new Set(groups.flatMap((group) => group.split("\n").map((line) => line.trim()).filter(Boolean)))];
+}
+
+function buildFileScopedDisplayRef(targetRef, filePath) {
+  return `${targetRef} :: ${filePath}`;
+}
+
+function extractConflictBlocks(fileContent) {
+  const lines = fileContent.split("\n");
+  const blocks = [];
+  let index = 0;
+
+  while (index < lines.length) {
+    if (!lines[index].startsWith("<<<<<<<")) {
+      index += 1;
+      continue;
+    }
+
+    const startLine = index + 1;
+    const currentLabel = lines[index].slice("<<<<<<<".length).trim() || "current";
+    index += 1;
+
+    const currentLines = [];
+    while (index < lines.length && !lines[index].startsWith("=======")) {
+      currentLines.push(lines[index]);
+      index += 1;
+    }
+
+    if (index >= lines.length) {
+      break;
+    }
+
+    index += 1;
+    const incomingLines = [];
+    while (index < lines.length && !lines[index].startsWith(">>>>>>>")) {
+      incomingLines.push(lines[index]);
+      index += 1;
+    }
+
+    if (index >= lines.length) {
+      break;
+    }
+
+    const incomingLabel = lines[index].slice(">>>>>>>".length).trim() || "incoming";
+    const endLine = index + 1;
+    index += 1;
+
+    blocks.push({
+      startLine,
+      endLine,
+      currentLabel,
+      incomingLabel,
+      currentText: currentLines.join("\n"),
+      incomingText: incomingLines.join("\n")
+    });
+  }
+
+  return blocks;
+}
+
+function buildConflictAnalysisDiff(conflicts) {
+  return conflicts
+    .map((fileConflict) => {
+      const blockText = fileConflict.blocks
+        .map(
+          (block, idx) =>
+            [
+              `Conflict ${idx + 1} (${fileConflict.filePath}:${block.startLine}-${block.endLine})`,
+              `Current Side (${block.currentLabel}):`,
+              block.currentText || "<empty>",
+              `Incoming Side (${block.incomingLabel}):`,
+              block.incomingText || "<empty>"
+            ].join("\n")
+        )
+        .join("\n\n");
+
+      return [`File: ${fileConflict.filePath}`, blockText].join("\n");
+    })
+    .join("\n\n");
+}
+
+function formatIsoDateFromUnixTimestamp(value) {
+  const timestampMs = Number.parseInt(value, 10) * 1000;
+  if (Number.isNaN(timestampMs)) {
+    return "unknown-date";
+  }
+
+  return new Date(timestampMs).toISOString().slice(0, 10);
+}
+
+function parseBlamePorcelain(porcelain) {
+  const records = [];
+  const lines = porcelain.split("\n");
+  let index = 0;
+
+  while (index < lines.length) {
+    const header = lines[index]?.trim();
+    if (!header) {
+      index += 1;
+      continue;
+    }
+
+    const headerMatch = header.match(/^([0-9a-f]{7,40}|\^?[0-9a-f]{7,40})\s+\d+\s+(\d+)\s+(\d+)$/i);
+    if (!headerMatch) {
+      index += 1;
+      continue;
+    }
+
+    const [, commitSha, finalLineRaw, lineCountRaw] = headerMatch;
+    const record = {
+      commitSha,
+      finalLine: Number.parseInt(finalLineRaw, 10),
+      lineCount: Number.parseInt(lineCountRaw, 10),
+      author: "Unknown Author",
+      authorMail: "",
+      authorTime: "",
+      summary: "",
+      code: ""
+    };
+
+    index += 1;
+    while (index < lines.length) {
+      const line = lines[index];
+      if (line.startsWith("\t")) {
+        record.code = line.slice(1);
+        index += 1;
+        break;
+      }
+
+      if (line.startsWith("author ")) {
+        record.author = line.slice("author ".length).trim();
+      } else if (line.startsWith("author-mail ")) {
+        record.authorMail = line.slice("author-mail ".length).trim();
+      } else if (line.startsWith("author-time ")) {
+        record.authorTime = line.slice("author-time ".length).trim();
+      } else if (line.startsWith("summary ")) {
+        record.summary = line.slice("summary ".length).trim();
+      }
+
+      index += 1;
+    }
+
+    records.push(record);
+  }
+
+  return records;
+}
+
+function buildBlameAnalysisDiff(filePath, records) {
+  const byAuthor = new Map();
+
+  for (const record of records) {
+    const key = `${record.author}|${record.authorMail}`;
+    const existing = byAuthor.get(key) ?? {
+      author: record.author,
+      authorMail: record.authorMail,
+      lineCount: 0,
+      commitShas: new Set(),
+      summaries: new Set()
+    };
+
+    existing.lineCount += 1;
+    existing.commitShas.add(record.commitSha);
+    if (record.summary) {
+      existing.summaries.add(record.summary);
+    }
+    byAuthor.set(key, existing);
+  }
+
+  const authorSection = [...byAuthor.values()]
+    .sort((left, right) => right.lineCount - left.lineCount)
+    .map(
+      (entry) =>
+        `- ${entry.author}${entry.authorMail ? ` ${entry.authorMail}` : ""}: ${entry.lineCount} line(s), ${entry.commitShas.size} commit(s), notable commits: ${[...entry.summaries].slice(0, 3).join("; ") || "n/a"}`
+    )
+    .join("\n");
+
+  const lineSection = records
+    .map((record) => {
+      const endLine = record.finalLine + record.lineCount - 1;
+      const lineLabel = record.lineCount > 1 ? `L${record.finalLine}-L${endLine}` : `L${record.finalLine}`;
+      const shortSha = record.commitSha.replace(/^\^/, "").slice(0, 8);
+      const authorDate = formatIsoDateFromUnixTimestamp(record.authorTime);
+      return `${lineLabel} | ${record.author} | ${authorDate} | ${shortSha} | ${record.summary || "no summary"} | ${record.code}`;
+    })
+    .join("\n");
+
+  return [`Blame summary for ${filePath}`, "", "Authors:", authorSection || "- none", "", "Line annotations:", lineSection].join("\n");
 }
 
 export function fetchWorkingTreeData(cwd) {
@@ -457,6 +918,87 @@ export function fetchWorkingTreeData(cwd) {
   };
 }
 
+export function fetchBlameData(filePath, cwd, runner = runGitCommand) {
+  const porcelain = runner(["blame", "--line-porcelain", "--", filePath], cwd);
+  const records = parseBlamePorcelain(porcelain);
+  const authorCount = new Set(records.map((record) => `${record.author}|${record.authorMail}`)).size;
+
+  return {
+    analysisType: "blame",
+    targetRef: `blame:${filePath}`,
+    displayRef: filePath,
+    commitId: null,
+    commitCount: records.length,
+    commits: [],
+    commitMessage: `Blame analysis for ${filePath}`,
+    diff: buildBlameAnalysisDiff(filePath, records),
+    filesChanged: [filePath],
+    stats: `${records.length} line annotation${records.length === 1 ? "" : "s"} across ${authorCount} author${authorCount === 1 ? "" : "s"}`
+  };
+}
+
+export function fetchStashData(stashRef = null, cwd, filePath = null, runner = runGitCommand) {
+  const resolvedStashRef = resolveStashRef(stashRef);
+  const fileArgs = filePath ? ["--", filePath] : [];
+  const commitMessage = runner(["log", "-1", "--pretty=format:%gs", resolvedStashRef], cwd);
+  const diff = runner(["stash", "show", "-p", resolvedStashRef, ...fileArgs], cwd);
+  const filesChangedRaw = runner(["stash", "show", "--name-only", resolvedStashRef, ...fileArgs], cwd);
+  const statsRaw = runner(["stash", "show", "--stat", resolvedStashRef, ...fileArgs], cwd);
+
+  return {
+    analysisType: "stash",
+    targetRef: resolvedStashRef,
+    displayRef: filePath ? buildFileScopedDisplayRef(resolvedStashRef, filePath) : resolvedStashRef,
+    commitId: resolvedStashRef,
+    commitCount: 1,
+    commits: [{ hash: resolvedStashRef, subject: commitMessage, body: commitMessage }],
+    commitMessage: commitMessage || `Stash entry ${resolvedStashRef}`,
+    diff,
+    filesChanged: parseFilesChanged(filesChangedRaw),
+    stats: parseStatsLine(statsRaw)
+  };
+}
+
+export function fetchConflictData(cwd, filePath = null, runner = runGitCommand) {
+  const fileArgs = filePath ? ["--", filePath] : [];
+  const conflictedFilesRaw = runner(["diff", "--name-only", "--diff-filter=U", ...fileArgs], cwd);
+  const conflictedFiles = parseFilesChanged(conflictedFilesRaw);
+
+  if (conflictedFiles.length === 0) {
+    throw new Error(filePath ? `No unresolved merge conflicts found for ${filePath}.` : "No unresolved merge conflicts found in the working tree.");
+  }
+
+  const conflicts = conflictedFiles.map((relativePath) => {
+    const absolutePath = path.resolve(cwd, relativePath);
+    const content = readFileSync(absolutePath, "utf8");
+    const blocks = extractConflictBlocks(content);
+
+    return {
+      filePath: relativePath,
+      blocks
+    };
+  }).filter((entry) => entry.blocks.length > 0);
+
+  if (conflicts.length === 0) {
+    throw new Error(filePath ? `Conflict markers were not found in ${filePath}.` : "Git reports unresolved conflicts, but no conflict markers were found in the conflicted files.");
+  }
+
+  const conflictCount = conflicts.reduce((sum, entry) => sum + entry.blocks.length, 0);
+
+  return {
+    analysisType: "conflict",
+    targetRef: filePath ? `conflict:${filePath}` : "conflict",
+    displayRef: filePath ?? "working-tree conflicts",
+    commitId: null,
+    commitCount: conflictCount,
+    commits: [],
+    commitMessage: filePath ? `Merge conflict analysis for ${filePath}` : "Merge conflict analysis for the working tree",
+    diff: buildConflictAnalysisDiff(conflicts),
+    filesChanged: conflicts.map((entry) => entry.filePath),
+    stats: `${conflictCount} conflict block${conflictCount === 1 ? "" : "s"} across ${conflicts.length} file${conflicts.length === 1 ? "" : "s"}`
+  };
+}
+
 function fetchSingleCommitData(commitId, cwd, runner) {
   const commitMessage = runner(["log", "-1", "--pretty=format:%B", commitId], cwd);
   const diff = runner(["diff", `${commitId}^!`], cwd);
@@ -468,6 +1010,27 @@ function fetchSingleCommitData(commitId, cwd, runner) {
     analysisType: "commit",
     targetRef: commitId,
     displayRef: commitId,
+    commitId,
+    commitCount: 1,
+    commits: [{ hash: commitId, subject, body: commitMessage }],
+    commitMessage,
+    diff,
+    filesChanged: parseFilesChanged(filesChangedRaw),
+    stats: parseStatsLine(statsRaw)
+  };
+}
+
+function fetchSingleCommitFileData(commitId, filePath, cwd, runner) {
+  const commitMessage = runner(["log", "-1", "--pretty=format:%B", commitId], cwd);
+  const diff = runner(["diff", `${commitId}^!`, "--", filePath], cwd);
+  const filesChangedRaw = runner(["show", "--pretty=format:", "--name-only", commitId, "--", filePath], cwd);
+  const statsRaw = runner(["show", "--stat", "--oneline", "--format=%h %s", commitId, "--", filePath], cwd);
+  const subject = runner(["log", "-1", "--pretty=format:%s", commitId], cwd);
+
+  return {
+    analysisType: "commit",
+    targetRef: commitId,
+    displayRef: buildFileScopedDisplayRef(commitId, filePath),
     commitId,
     commitCount: 1,
     commits: [{ hash: commitId, subject, body: commitMessage }],
@@ -506,8 +1069,42 @@ function fetchRangeData(rangeRef, cwd, runner) {
   };
 }
 
+function fetchRangeFileData(rangeRef, filePath, cwd, runner) {
+  const diff = runner(["diff", rangeRef, "--", filePath], cwd);
+  const filesChangedRaw = runner(["diff", "--name-only", rangeRef, "--", filePath], cwd);
+  const statsRaw = runner(["diff", "--stat", rangeRef, "--", filePath], cwd);
+  const commitLogRaw = runner(
+    ["log", "--reverse", "--pretty=format:%H%x1f%s%x1f%B", rangeRef, "--", filePath],
+    cwd
+  );
+
+  const commits = parseCommitLog(commitLogRaw);
+  if (commits.length === 0) {
+    throw new Error(`No commits found in range ${rangeRef} for file ${filePath}`);
+  }
+
+  return {
+    analysisType: "range",
+    targetRef: rangeRef,
+    displayRef: buildFileScopedDisplayRef(rangeRef, filePath),
+    commitId: null,
+    commitCount: commits.length,
+    commits,
+    commitMessage: buildCommitMessage(commits),
+    diff,
+    filesChanged: parseFilesChanged(filesChangedRaw),
+    stats: parseStatsLine(statsRaw)
+  };
+}
+
 export function fetchCommitData(targetRef, cwd, runner = runGitCommand) {
   return isRangeRef(targetRef)
     ? fetchRangeData(targetRef, cwd, runner)
     : fetchSingleCommitData(targetRef, cwd, runner);
+}
+
+export function fetchCommitDataForFile(targetRef, filePath, cwd, runner = runGitCommand) {
+  return isRangeRef(targetRef)
+    ? fetchRangeFileData(targetRef, filePath, cwd, runner)
+    : fetchSingleCommitFileData(targetRef, filePath, cwd, runner);
 }

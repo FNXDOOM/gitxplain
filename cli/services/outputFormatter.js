@@ -1,56 +1,174 @@
-import process from "node:process";
+import { ANSI, colorize } from "./colorSupport.js";
 
-const ANSI = {
-  reset: "\u001b[0m",
-  bold: "\u001b[1m",
-  cyan: "\u001b[36m",
-  yellow: "\u001b[33m",
-  green: "\u001b[32m",
-  red: "\u001b[31m",
-  gray: "\u001b[90m"
-};
-
-function supportsColor() {
-  return Boolean(process.stdout?.isTTY) && process.env.NO_COLOR == null;
+function stripInlineMarkdown(text) {
+  return text
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/__([^_]+)__/g, "$1")
+    .replace(/\*([^*]+)\*/g, "$1")
+    .replace(/_([^_]+)_/g, "$1")
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1 ($2)")
+    .trimEnd();
 }
 
-function colorize(text, color) {
-  if (!supportsColor()) {
-    return text;
+function normalizeMarkdownLine(line, state) {
+  const trimmed = line.trim();
+
+  if (/^```/.test(trimmed)) {
+    state.inCodeBlock = !state.inCodeBlock;
+    return "";
   }
 
-  return `${color}${text}${ANSI.reset}`;
+  if (state.inCodeBlock) {
+    return `  ${line.replace(/^\s*/, "")}`;
+  }
+
+  if (/^---+$/.test(trimmed) || /^\*\*\*+$/.test(trimmed)) {
+    return "";
+  }
+
+  let normalizedHeading = trimmed
+    .replace(/^#{1,6}\s+/, "")
+    .replace(/^([0-9]+\.)\s+/, "");
+  normalizedHeading = stripInlineMarkdown(normalizedHeading).replace(/:\s*$/, "").trim();
+
+  if (
+    /^(summary|issues? fixed|issue|root cause|fix(?: explanation)?|impact|risk level|severity|technical breakdown|full analysis|line-by-line code walkthrough|code review|security review|security findings|review findings|suggestions|recommended mitigations)$/i.test(
+      normalizedHeading
+    )
+  ) {
+    return `${normalizedHeading}:`;
+  }
+
+  if (/^>\s*/.test(trimmed)) {
+    return stripInlineMarkdown(trimmed.replace(/^>\s*/, ""));
+  }
+
+  const bulletMatch = line.match(/^(\s*)([-*+]|\d+\.)\s+(.*)$/);
+  if (bulletMatch) {
+    const [, indent, marker, content] = bulletMatch;
+    return `${indent}${marker} ${stripInlineMarkdown(content)}`;
+  }
+
+  return stripInlineMarkdown(line);
 }
 
 function formatTargetLabel(commitData) {
-  return commitData.analysisType === "range" ? "Range" : "Commit";
+  if (commitData.analysisType === "range") {
+    return "Range";
+  }
+
+  if (commitData.analysisType === "blame") {
+    return "File";
+  }
+
+  if (commitData.analysisType === "stash") {
+    return "Stash";
+  }
+
+  if (commitData.analysisType === "conflict") {
+    return "Conflict";
+  }
+
+  return "Commit";
 }
 
-function highlightLine(line) {
-  if (/^([0-9]+\.)?\s*(Summary|Issue|Root Cause|Fix|Impact|Risk Level|Technical Breakdown|Security Findings|Suggestions|Review Findings):/i.test(line)) {
-    return colorize(line, ANSI.bold + ANSI.cyan);
+function normalizeHeading(line) {
+  const match = line.match(/^([0-9]+\.)?\s*(Summary|Issues? Fixed|Issue|Root Cause|Fix(?: Explanation)?|Impact|Risk Level|Severity|Technical Breakdown|Full Analysis|Line-by-Line Code Walkthrough|Code Review|Security Review|Security Findings|Review Findings|Suggestions|Recommended Mitigations)\s*:?\s*$/i);
+
+  if (!match) {
+    return null;
   }
 
-  if (/risk/i.test(line) && /\blow\b/i.test(line)) {
-    return colorize(line, ANSI.green);
+  return `${match[2]}:`;
+}
+
+function isFileHeading(line) {
+  return /^(?:File|Path)\s*:/i.test(line) || /^[A-Za-z0-9_./-]+\.[A-Za-z0-9]+:\s*$/.test(line);
+}
+
+function formatBulletLine(line) {
+  const match = line.match(/^(\s*)([-*]|\d+\.)\s+(.*)$/);
+
+  if (!match) {
+    return null;
   }
 
-  if (/risk/i.test(line) && /\bmedium\b/i.test(line)) {
-    return colorize(line, ANSI.yellow);
+  const [, indent, marker, content] = match;
+  return `${indent}${colorize(marker, ANSI.cyan)} ${content}`;
+}
+
+function formatSeverityLine(line) {
+  if (/\brisk level\b|\bseverity\b/i.test(line) === false) {
+    return null;
   }
 
-  if (/risk/i.test(line) && /\bhigh\b/i.test(line)) {
-    return colorize(line, ANSI.red);
+  return line;
+}
+
+function formatLine(line) {
+  const trimmed = line.trim();
+
+  if (trimmed === "") {
+    return "";
+  }
+
+  const normalizedHeading = normalizeHeading(trimmed);
+
+  if (normalizedHeading) {
+    return colorize(normalizedHeading, ANSI.bold + ANSI.cyan);
+  }
+
+  if (isFileHeading(trimmed)) {
+    return colorize(trimmed, ANSI.bold + ANSI.cyan);
+  }
+
+  const bulletLine = formatBulletLine(line);
+
+  if (bulletLine) {
+    return bulletLine;
+  }
+
+  const severityLine = formatSeverityLine(trimmed);
+
+  if (severityLine) {
+    return severityLine;
   }
 
   return line;
 }
 
 function formatExplanation(explanation) {
-  return explanation
+  const state = { inCodeBlock: false };
+  const lines = explanation
+    .replaceAll("\r\n", "\n")
     .split("\n")
-    .map((line) => highlightLine(line))
-    .join("\n");
+    .map((line) => normalizeMarkdownLine(line, state));
+  const formatted = [];
+  let previousWasBlank = false;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    const formattedLine = formatLine(line);
+    const isHeading = normalizeHeading(trimmed) != null || isFileHeading(trimmed);
+
+    if (trimmed === "") {
+      if (!previousWasBlank && formatted.length > 0) {
+        formatted.push("");
+      }
+      previousWasBlank = true;
+      continue;
+    }
+
+    if (isHeading && formatted.length > 0 && !previousWasBlank) {
+      formatted.push("");
+    }
+
+    formatted.push(formattedLine);
+    previousWasBlank = false;
+  }
+
+  return formatted.join("\n").trimEnd();
 }
 
 export function formatPreamble({ mode, commitData, options, promptMeta }) {
@@ -92,6 +210,10 @@ export function formatFooter({ responseMeta, promptMeta, options }) {
 
   if (responseMeta.usage) {
     lines.push(`Usage: ${JSON.stringify(responseMeta.usage)}`);
+  }
+
+  if (responseMeta.estimatedCostUsd != null) {
+    lines.push(`Estimated Cost: $${responseMeta.estimatedCostUsd.toFixed(6)}`);
   }
 
   if (promptMeta?.warnings?.length) {

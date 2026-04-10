@@ -1,42 +1,37 @@
-import process from "node:process";
 import {
+  createCommitFromTree,
+  deletePaths,
+  getCommitMetadata,
   getCommitParents,
+  getCurrentBranchName,
   getCurrentHeadSha,
   gitCherryPick,
   gitCherryPickAbort,
   gitCherryPickNoCommit,
   gitAddFiles,
+  gitCreateBranch,
+  gitCheckout,
+  gitCheckoutDetached,
+  gitCheckoutOrphan,
   gitCommit,
+  gitDeleteBranch,
+  gitForceBranch,
+  gitRemoveCachedAll,
+  gitRebaseAbort,
+  gitRebaseRebaseMergesOnto,
   gitResetHard,
   gitUnstageAll,
   hasStagedChanges,
   isAncestorCommit,
   isWorkingTreeClean,
   listCommitsAfter,
+  listCommitsAfterTopo,
+  listFilesInRef,
   resolveTreeSha,
   runGitCommandUnchecked,
   resolveCommitSha
 } from "./gitService.js";
-
-const ANSI = {
-  reset: "\u001b[0m",
-  bold: "\u001b[1m",
-  cyan: "\u001b[36m",
-  yellow: "\u001b[33m",
-  green: "\u001b[32m"
-};
-
-function supportsColor() {
-  return Boolean(process.stdout?.isTTY) && process.env.NO_COLOR == null;
-}
-
-function colorize(text, color) {
-  if (!supportsColor()) {
-    return text;
-  }
-
-  return `${color}${text}${ANSI.reset}`;
-}
+import { ANSI, colorize } from "./colorSupport.js";
 
 function extractJsonPayload(explanation) {
   const fencedMatch = explanation.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
@@ -80,21 +75,76 @@ function validateCommitEntry(entry, index) {
   }
 }
 
-function validateUniqueFileAssignments(commits) {
-  const seenFiles = new Map();
+function sortPlanCommits(plan) {
+  return [...plan.commits].sort((left, right) => left.order - right.order);
+}
 
-  for (const commit of commits) {
+function normalizeSplitPlan(plan) {
+  const seenFiles = new Set();
+  const normalizedCommits = [];
+  const dedupedFiles = [];
+
+  for (const commit of sortPlanCommits(plan)) {
+    const files = [];
+
     for (const file of commit.files) {
-      const previousOrder = seenFiles.get(file);
-      if (previousOrder != null) {
-        throw new Error(
-          `Failed to parse split plan: file "${file}" appears in both commit ${previousOrder} and commit ${commit.order}.`
-        );
+      if (seenFiles.has(file)) {
+        dedupedFiles.push(file);
+        continue;
       }
 
-      seenFiles.set(file, commit.order);
+      seenFiles.add(file);
+      files.push(file);
     }
+
+    if (files.length === 0) {
+      continue;
+    }
+
+    normalizedCommits.push({
+      ...commit,
+      files
+    });
   }
+
+  return {
+    ...plan,
+    commits: normalizedCommits.map((commit, index) => ({
+      ...commit,
+      order: index + 1
+    })),
+    warnings:
+      dedupedFiles.length > 0
+        ? [
+            `Duplicate file assignments were removed from later split groups: ${[...new Set(dedupedFiles)].join(", ")}.`
+          ]
+        : []
+  };
+}
+
+function getPlanFiles(plan) {
+  return [...new Set(sortPlanCommits(plan).flatMap((commit) => commit.files))];
+}
+
+function summarizeFileKinds(files) {
+  if (files.every((file) => file.startsWith("test/") || file.endsWith(".test.js"))) {
+    return {
+      message: "test: include remaining test updates",
+      description: "Captures remaining test file changes that were not assigned to an earlier split group."
+    };
+  }
+
+  if (files.every((file) => file.startsWith("docs/") || file.toLowerCase() === "readme.md")) {
+    return {
+      message: "docs: include remaining documentation updates",
+      description: "Captures remaining documentation changes that were not assigned to an earlier split group."
+    };
+  }
+
+  return {
+    message: "chore: include remaining commit changes",
+    description: "Captures files from the original commit that were not assigned to an earlier split group."
+  };
 }
 
 export function parseSplitPlan(explanation) {
@@ -126,9 +176,45 @@ export function parseSplitPlan(explanation) {
   }
 
   parsed.commits.forEach(validateCommitEntry);
-  validateUniqueFileAssignments(parsed.commits);
 
-  return parsed;
+  return normalizeSplitPlan(parsed);
+}
+
+export function reconcileSplitPlan(plan, filesChanged) {
+  const commitFiles = [...new Set(filesChanged)];
+  const commitFileSet = new Set(commitFiles);
+  const plannedFiles = getPlanFiles(plan);
+  const extraFiles = plannedFiles.filter((file) => !commitFileSet.has(file));
+  const missingFiles = commitFiles.filter((file) => !plannedFiles.includes(file));
+  const warnings = [...(plan.warnings ?? [])];
+  let commits = sortPlanCommits(plan).map((commit) => ({ ...commit, files: [...commit.files] }));
+
+  if (extraFiles.length > 0) {
+    warnings.push(`Files not present in the target commit were removed from the split plan: ${extraFiles.join(", ")}.`);
+    commits = commits
+      .map((commit) => ({
+        ...commit,
+        files: commit.files.filter((file) => !extraFiles.includes(file))
+      }))
+      .filter((commit) => commit.files.length > 0);
+  }
+
+  if (missingFiles.length > 0) {
+    const fallback = summarizeFileKinds(missingFiles);
+    warnings.push(`Missing files were added to a final fallback split group: ${missingFiles.join(", ")}.`);
+    commits.push({
+      order: commits.length + 1,
+      message: fallback.message,
+      files: missingFiles,
+      description: fallback.description
+    });
+  }
+
+  return {
+    ...plan,
+    commits: commits.map((commit, index) => ({ ...commit, order: index + 1 })),
+    warnings
+  };
 }
 
 export function formatSplitPlan(plan) {
@@ -137,6 +223,10 @@ export function formatSplitPlan(plan) {
     `${colorize("Original Summary:", ANSI.bold + ANSI.cyan)} ${plan.original_summary}`,
     `${colorize("Reason To Split:", ANSI.bold + ANSI.cyan)} ${plan.reason_to_split ?? "Already atomic"}`
   ];
+
+  for (const warning of plan.warnings ?? []) {
+    lines.push(`${colorize("Warning:", ANSI.bold + ANSI.yellow)} ${warning}`);
+  }
 
   if (plan.commits.length === 0) {
     lines.push(colorize("No split recommended.", ANSI.green));
@@ -174,15 +264,87 @@ function getDirtyWorkingTreeSummary(cwd) {
     .join("\n");
 }
 
-function sortPlanCommits(plan) {
-  return [...plan.commits].sort((left, right) => left.order - right.order);
+export function validateSplitExecutionTarget(
+  commitId,
+  cwd,
+  helpers = {
+    resolveCommitSha,
+    getCurrentHeadSha,
+    getCommitParents,
+    isAncestorCommit
+  }
+) {
+  const targetSha = helpers.resolveCommitSha(commitId, cwd);
+  const currentHeadSha = helpers.getCurrentHeadSha(cwd);
+
+  if (!helpers.isAncestorCommit(targetSha, currentHeadSha, cwd)) {
+    throw new Error(`Commit ${commitId} is not reachable from the current HEAD.`);
+  }
+
+  const parents = helpers.getCommitParents(targetSha, cwd);
+  if (parents.length > 1) {
+    throw new Error("Only non-merge commits can be split. Merge commits have multiple parents.");
+  }
+
+  return {
+    targetSha,
+    currentHeadSha,
+    parentSha: parents[0] ?? null,
+    isHeadTarget: targetSha === currentHeadSha
+  };
+}
+
+function createTempRootSplitBranchName() {
+  return `gitxplain-split-root-${Date.now()}`;
+}
+
+function restoreOriginalPointer(originalBranch, originalHeadSha, cwd) {
+  if (originalBranch === "HEAD") {
+    gitCheckoutDetached(originalHeadSha, cwd);
+    return;
+  }
+
+  gitCheckout(originalBranch, cwd);
+  gitResetHard(originalHeadSha, cwd);
+}
+
+function finalizeRootSplitBranch(tempBranch, originalBranch, rewrittenHeadSha, cwd) {
+  if (originalBranch === "HEAD") {
+    gitCheckoutDetached(rewrittenHeadSha, cwd);
+    gitDeleteBranch(tempBranch, cwd);
+    return;
+  }
+
+  gitForceBranch(originalBranch, rewrittenHeadSha, cwd);
+  gitCheckout(originalBranch, cwd);
+  gitDeleteBranch(tempBranch, cwd);
+}
+
+function replayDescendantsFromOriginalTrees(targetSha, originalHeadSha, splitTipSha, cwd) {
+  const descendantShas = listCommitsAfterTopo(targetSha, originalHeadSha, cwd);
+  const rewritten = new Map([[targetSha, splitTipSha]]);
+
+  for (const originalSha of descendantShas) {
+    const originalParents = getCommitParents(originalSha, cwd);
+    const rewrittenParents = originalParents.map((parentSha) => rewritten.get(parentSha) ?? parentSha);
+    const treeSha = resolveTreeSha(originalSha, cwd);
+    const metadata = getCommitMetadata(originalSha, cwd);
+    const rewrittenSha = createCommitFromTree(treeSha, rewrittenParents, metadata, cwd);
+    rewritten.set(originalSha, rewrittenSha);
+  }
+
+  return rewritten.get(originalHeadSha) ?? splitTipSha;
 }
 
 export function executeSplit(plan, commitId, cwd) {
-  const targetSha = resolveCommitSha(commitId, cwd);
-  const originalHeadSha = getCurrentHeadSha(cwd);
+  const { targetSha, currentHeadSha, parentSha } = validateSplitExecutionTarget(commitId, cwd);
+  const originalHeadSha = currentHeadSha;
+  const originalTargetTreeSha = resolveTreeSha(targetSha, cwd);
   const originalHeadTreeSha = resolveTreeSha("HEAD", cwd);
   const orderedCommits = sortPlanCommits(plan);
+  const originalBranch = getCurrentBranchName(cwd);
+  let rootSplitTempBranch = null;
+  let rootSplitOriginalBranch = null;
 
   try {
     if (!isWorkingTreeClean(cwd)) {
@@ -194,44 +356,73 @@ export function executeSplit(plan, commitId, cwd) {
       );
     }
 
-    if (!isAncestorCommit(targetSha, originalHeadSha, cwd)) {
-      throw new Error(`Commit ${commitId} is not reachable from the current HEAD.`);
-    }
-
-    const parents = getCommitParents(targetSha, cwd);
-    if (parents.length !== 1) {
-      throw new Error("Only non-merge commits can be split automatically.");
-    }
-
-    const [parentSha] = parents;
     const commitsToReplay = listCommitsAfter(targetSha, originalHeadSha, cwd);
 
-    for (const replayCommit of commitsToReplay) {
-      if (getCommitParents(replayCommit, cwd).length !== 1) {
-        throw new Error(
-          "Automatic split currently supports linear history only. Rebase merge commits manually first."
-        );
+    if (parentSha == null) {
+      const tempBranch = createTempRootSplitBranchName();
+      const originalHeadFiles = listFilesInRef("HEAD", cwd);
+      rootSplitOriginalBranch = originalBranch;
+      rootSplitTempBranch = tempBranch;
+
+      gitCheckoutOrphan(tempBranch, cwd);
+      gitRemoveCachedAll(cwd);
+      deletePaths(originalHeadFiles, cwd);
+      gitCherryPickNoCommit(targetSha, cwd);
+
+      for (const commit of orderedCommits) {
+        gitUnstageAll(cwd);
+        gitAddFiles(commit.files, cwd);
+
+        if (!hasStagedChanges(cwd)) {
+          throw new Error(
+            `Split plan execution failed: commit ${commit.order} (${commit.message}) does not stage any new changes.`
+          );
+        }
+
+        gitCommit(commit.message, cwd);
+      }
+    } else {
+      gitResetHard(parentSha, cwd);
+      gitCherryPickNoCommit(targetSha, cwd);
+
+      for (const commit of orderedCommits) {
+        gitUnstageAll(cwd);
+        gitAddFiles(commit.files, cwd);
+
+        if (!hasStagedChanges(cwd)) {
+          throw new Error(
+            `Split plan execution failed: commit ${commit.order} (${commit.message}) does not stage any new changes.`
+          );
+        }
+
+        gitCommit(commit.message, cwd);
       }
     }
 
-    gitResetHard(parentSha, cwd);
-    gitCherryPickNoCommit(targetSha, cwd);
+    const splitTipSha = getCurrentHeadSha(cwd);
+    const splitTipTreeSha = resolveTreeSha(splitTipSha, cwd);
 
-    for (const commit of orderedCommits) {
-      gitUnstageAll(cwd);
-      gitAddFiles(commit.files, cwd);
-
-      if (!hasStagedChanges(cwd)) {
-        throw new Error(
-          `Split plan execution failed: commit ${commit.order} (${commit.message}) does not stage any new changes.`
-        );
-      }
-
-      gitCommit(commit.message, cwd);
+    if (splitTipTreeSha !== originalTargetTreeSha) {
+      throw new Error("Split verification failed: the split commit stack does not reproduce the original target commit tree.");
     }
 
-    for (const replayCommit of commitsToReplay) {
-      gitCherryPick(replayCommit, cwd);
+    let rewrittenHeadSha = splitTipSha;
+    if (commitsToReplay.length > 0) {
+      rewrittenHeadSha = replayDescendantsFromOriginalTrees(targetSha, originalHeadSha, splitTipSha, cwd);
+
+      if (rootSplitTempBranch) {
+        finalizeRootSplitBranch(rootSplitTempBranch, rootSplitOriginalBranch, rewrittenHeadSha, cwd);
+      } else {
+        if (originalBranch !== "HEAD") {
+          gitResetHard(rewrittenHeadSha, cwd);
+        } else {
+          gitCheckoutDetached(rewrittenHeadSha, cwd);
+        }
+      }
+    } else if (rootSplitTempBranch) {
+      finalizeRootSplitBranch(rootSplitTempBranch, rootSplitOriginalBranch, splitTipSha, cwd);
+    } else if (originalBranch === "HEAD") {
+      gitCheckoutDetached(splitTipSha, cwd);
     }
 
     const rewrittenHeadTreeSha = resolveTreeSha("HEAD", cwd);
@@ -242,7 +433,18 @@ export function executeSplit(plan, commitId, cwd) {
     }
   } catch (error) {
     gitCherryPickAbort(cwd);
-    runGitCommandUnchecked(["reset", "--hard", originalHeadSha], cwd);
+
+    try {
+      if (rootSplitTempBranch) {
+        restoreOriginalPointer(rootSplitOriginalBranch ?? "HEAD", originalHeadSha, cwd);
+        gitDeleteBranch(rootSplitTempBranch, cwd);
+      } else {
+        runGitCommandUnchecked(["reset", "--hard", originalHeadSha], cwd);
+      }
+    } catch {
+      runGitCommandUnchecked(["reset", "--hard", originalHeadSha], cwd);
+    }
+
     console.error(error.message);
     console.error(buildRecoveryMessage(originalHeadSha));
     throw new Error("Split execution aborted.");
