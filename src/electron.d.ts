@@ -37,6 +37,43 @@ export interface GitxplainResult {
   error?: string;
 }
 
+export interface GitxplainCostResult extends GitxplainResult {
+  stats: {
+    requestCount: number;
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+    estimatedCostUsd: number;
+    raw: string;
+  };
+}
+
+export interface PipelineOption {
+  id: string;
+  label: string;
+  description: string;
+  files: string[];
+}
+
+export interface PipelineAnalysis {
+  supported: boolean;
+  reason?: string;
+  primary?: {
+    type: string;
+    displayName: string;
+    packageManager?: string;
+  };
+  existingWorkflows: string[];
+  options: PipelineOption[];
+}
+
+export interface PipelineGenerationResult {
+  selection: PipelineOption;
+  generatedFiles: Record<string, string>;
+  writtenFiles: string[];
+  notes: string[];
+}
+
 export interface GitBranchList {
   current: string;
   all: string[];
@@ -86,6 +123,16 @@ export interface ElectronAPI {
   gitxplainInstallHook: (repoPath: string, hookName?: string) => Promise<GitxplainResult>;
   gitxplainSplitPreview: (repoPath: string, commitRef: string) => Promise<GitxplainResult>;
   gitxplainSplitExecute: (repoPath: string, commitRef: string) => Promise<GitxplainResult>;
+  gitxplainRefactor: (repoPath: string, commitRef: string) => Promise<GitxplainResult>;
+  gitxplainTestSuggest: (repoPath: string, commitRef: string) => Promise<GitxplainResult>;
+  gitxplainPrDescription: (repoPath: string, commitRef: string) => Promise<GitxplainResult>;
+  gitxplainChangelog: (repoPath: string, commitRef: string) => Promise<GitxplainResult>;
+  gitxplainBlame: (repoPath: string, filePath: string) => Promise<GitxplainResult>;
+  gitxplainConflict: (repoPath: string, diffFile?: string) => Promise<GitxplainResult>;
+  gitxplainStash: (repoPath: string, stashRef?: string, diffFile?: string) => Promise<GitxplainResult>;
+  gitxplainCost: (repoPath: string) => Promise<GitxplainCostResult>;
+  gitxplainPipelineOptions: (repoPath: string) => Promise<PipelineAnalysis>;
+  gitxplainPipelineGenerate: (repoPath: string, optionId: string, writeFiles?: boolean) => Promise<PipelineGenerationResult>;
 }
 
 declare global {

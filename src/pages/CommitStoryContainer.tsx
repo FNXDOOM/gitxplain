@@ -9,6 +9,7 @@ import CommitStoryLayout from '../components/CommitStoryLayout';
 import ChangesView from './ChangesView';
 import HistoryView from './HistoryView';
 import StoriesView from './StoriesView';
+import AnalysisView from './AnalysisView';
 import InsightsView from './InsightsView';
 import SettingsView from './SettingsView';
 
@@ -23,6 +24,8 @@ export default function CommitStoryContainer() {
         return <HistoryView />;
       case 'stories':
         return <StoriesView />;
+      case 'analysis':
+        return <AnalysisView />;
       case 'insights':
         return <InsightsView />;
       case 'settings':

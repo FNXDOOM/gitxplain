@@ -35,8 +35,8 @@ interface CommitStoryStore {
   setInsightsLoading: (loading: boolean) => void;
   
   // UI State
-  currentTab: 'changes' | 'history' | 'stories' | 'insights' | 'settings';
-  setCurrentTab: (tab: 'changes' | 'history' | 'stories' | 'insights' | 'settings') => void;
+  currentTab: 'changes' | 'history' | 'stories' | 'analysis' | 'insights' | 'settings';
+  setCurrentTab: (tab: 'changes' | 'history' | 'stories' | 'analysis' | 'insights' | 'settings') => void;
   sidebarCollapsed: boolean;
   setSidebarCollapsed: (collapsed: boolean) => void;
   

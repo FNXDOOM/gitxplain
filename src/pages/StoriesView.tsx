@@ -104,6 +104,7 @@ export default function StoriesView() {
     setStoriesLoading,
     currentProject,
     commits,
+    setCurrentTab,
   } = useCommitStoryStore();
 
   const [generationProgress, setGenerationProgress] = useState<string>('');
@@ -216,6 +217,13 @@ export default function StoriesView() {
           </p>
         </div>
         <div className="flex gap-2">
+          <button
+            onClick={() => setCurrentTab('analysis')}
+            className="flex items-center gap-2 px-4 py-2 border border-border rounded-md hover:bg-accent transition-colors"
+          >
+            <Sparkles className="w-4 h-4" />
+            Open Analysis
+          </button>
           {stories.length > 0 && (
             <button
               onClick={() => exportStories(stories)}

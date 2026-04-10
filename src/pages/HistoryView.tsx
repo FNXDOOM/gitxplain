@@ -288,6 +288,8 @@ export default function HistoryView() {
   const [splitLoading, setSplitLoading] = useState(false);
   const [splitExecuting, setSplitExecuting] = useState(false);
   const [splitError, setSplitError] = useState<string>('');
+  const [stashRef, setStashRef] = useState<string>('stash@{0}');
+  const [blameFilePath, setBlameFilePath] = useState<string>('');
   const [pushLoading, setPushLoading] = useState(false);
   const [pushError, setPushError] = useState<string>('');
   const [pushSuccessMessage, setPushSuccessMessage] = useState<string>('');
@@ -351,6 +353,29 @@ export default function HistoryView() {
     setSelectedCommit(commit);
     setAiExplanation(''); // Clear previous explanation
     setAiMode('');
+    setBlameFilePath(commit.files?.[0]?.path || '');
+  };
+
+  const runAnalysisAction = async (
+    modeKey: string,
+    modeLabel: string,
+    action: () => Promise<{ output: string; error?: string }>,
+    formatter: (text: string) => string = formatAiOutput
+  ) => {
+    setAiLoading(true);
+    setAiMode(modeKey);
+    try {
+      const result = await action();
+      if (result.error) {
+        setAiExplanation(`Error (${modeLabel}): ${result.error}\n\n${result.output || getProviderHelpMessage(modeLabel)}`);
+      } else {
+        setAiExplanation(formatter(result.output));
+      }
+    } catch (error: any) {
+      setAiExplanation(`Failed to run ${modeLabel.toLowerCase()}: ${error.message}`);
+    } finally {
+      setAiLoading(false);
+    }
   };
 
   const handleExplain = async () => {
@@ -448,6 +473,64 @@ export default function HistoryView() {
     } finally {
       setAiLoading(false);
     }
+  };
+
+  const handleRefactor = async () => {
+    if (!selectedCommit || !currentProject) return;
+    await runAnalysisAction('refactor', 'Refactor Suggestions', () =>
+      window.electronAPI.gitxplainRefactor(currentProject.path, selectedCommit.hash)
+    );
+  };
+
+  const handleTestSuggest = async () => {
+    if (!selectedCommit || !currentProject) return;
+    await runAnalysisAction('test-suggest', 'Test Suggestions', () =>
+      window.electronAPI.gitxplainTestSuggest(currentProject.path, selectedCommit.hash)
+    );
+  };
+
+  const handlePrDescription = async () => {
+    if (!selectedCommit || !currentProject) return;
+    await runAnalysisAction('pr-description', 'PR Description', () =>
+      window.electronAPI.gitxplainPrDescription(currentProject.path, selectedCommit.hash)
+    );
+  };
+
+  const handleChangelog = async () => {
+    if (!selectedCommit || !currentProject) return;
+    await runAnalysisAction('changelog', 'Changelog Draft', () =>
+      window.electronAPI.gitxplainChangelog(currentProject.path, selectedCommit.hash)
+    );
+  };
+
+  const handleBlame = async (filePath?: string) => {
+    if (!currentProject) return;
+    const targetFile = (filePath || blameFilePath).trim();
+    if (!targetFile) {
+      setAiExplanation('Select or enter a file path first, then run Blame Analysis.');
+      return;
+    }
+
+    setBlameFilePath(targetFile);
+    await runAnalysisAction('blame', `Blame Analysis (${targetFile})`, () =>
+      window.electronAPI.gitxplainBlame(currentProject.path, targetFile)
+    );
+  };
+
+  const handleConflict = async () => {
+    if (!currentProject) return;
+    await runAnalysisAction('conflict', 'Merge Conflict Analysis', () =>
+      window.electronAPI.gitxplainConflict(currentProject.path)
+    );
+  };
+
+  const handleStash = async () => {
+    if (!currentProject) return;
+    const resolvedRef = stashRef.trim() || 'stash@{0}';
+    setStashRef(resolvedRef);
+    await runAnalysisAction('stash', `Stash Analysis (${resolvedRef})`, () =>
+      window.electronAPI.gitxplainStash(currentProject.path, resolvedRef)
+    );
   };
 
   const openSplitModal = async () => {
@@ -566,6 +649,13 @@ export default function HistoryView() {
       case 'review': return 'Code Review';
       case 'security': return 'Security Analysis';
       case 'lines': return 'Line-by-Line Walkthrough';
+      case 'refactor': return 'Refactor Suggestions';
+      case 'test-suggest': return 'Test Suggestions';
+      case 'pr-description': return 'PR Description Draft';
+      case 'changelog': return 'Changelog Draft';
+      case 'blame': return 'Blame Analysis';
+      case 'conflict': return 'Merge Conflict Analysis';
+      case 'stash': return 'Stash Analysis';
       default: return 'AI Analysis';
     }
   };
@@ -785,6 +875,54 @@ export default function HistoryView() {
                   Line-by-Line
                 </button>
                 <button
+                  onClick={handleRefactor}
+                  disabled={aiLoading}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-md transition-colors disabled:opacity-50 ${
+                    aiMode === 'refactor'
+                      ? 'bg-primary text-primary-foreground'
+                      : 'border border-border hover:bg-accent'
+                  }`}
+                >
+                  <Code2 className="w-4 h-4" />
+                  Refactor
+                </button>
+                <button
+                  onClick={handleTestSuggest}
+                  disabled={aiLoading}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-md transition-colors disabled:opacity-50 ${
+                    aiMode === 'test-suggest'
+                      ? 'bg-primary text-primary-foreground'
+                      : 'border border-border hover:bg-accent'
+                  }`}
+                >
+                  <Eye className="w-4 h-4" />
+                  Test Suggest
+                </button>
+                <button
+                  onClick={handlePrDescription}
+                  disabled={aiLoading}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-md transition-colors disabled:opacity-50 ${
+                    aiMode === 'pr-description'
+                      ? 'bg-primary text-primary-foreground'
+                      : 'border border-border hover:bg-accent'
+                  }`}
+                >
+                  <FileText className="w-4 h-4" />
+                  PR Description
+                </button>
+                <button
+                  onClick={handleChangelog}
+                  disabled={aiLoading}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-md transition-colors disabled:opacity-50 ${
+                    aiMode === 'changelog'
+                      ? 'bg-primary text-primary-foreground'
+                      : 'border border-border hover:bg-accent'
+                  }`}
+                >
+                  <FileText className="w-4 h-4" />
+                  Changelog
+                </button>
+                <button
                   onClick={openSplitModal}
                   disabled={aiLoading || splitLoading || splitExecuting}
                   className="flex items-center gap-2 px-4 py-2 rounded-md transition-colors disabled:opacity-50 border border-border hover:bg-accent"
@@ -792,6 +930,70 @@ export default function HistoryView() {
                   <Scissors className="w-4 h-4" />
                   Split Commit
                 </button>
+              </div>
+
+              <div className="mb-6 p-4 rounded-md border border-border bg-card/50 space-y-4">
+                <h4 className="text-sm font-semibold">Working Tree & File-Level Analysis</h4>
+                <div className="flex gap-2 flex-wrap">
+                  <button
+                    onClick={handleConflict}
+                    disabled={aiLoading}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-md transition-colors disabled:opacity-50 ${
+                      aiMode === 'conflict'
+                        ? 'bg-primary text-primary-foreground'
+                        : 'border border-border hover:bg-accent'
+                    }`}
+                  >
+                    <Shield className="w-4 h-4" />
+                    Analyze Conflicts
+                  </button>
+                  <button
+                    onClick={handleStash}
+                    disabled={aiLoading}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-md transition-colors disabled:opacity-50 ${
+                      aiMode === 'stash'
+                        ? 'bg-primary text-primary-foreground'
+                        : 'border border-border hover:bg-accent'
+                    }`}
+                  >
+                    <GitBranch className="w-4 h-4" />
+                    Explain Stash
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-muted-foreground mb-1">Stash Ref (optional)</label>
+                    <input
+                      value={stashRef}
+                      onChange={(event) => setStashRef(event.target.value)}
+                      placeholder="stash@{0}"
+                      className="w-full px-3 py-2 border border-border rounded-md bg-background text-foreground text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-muted-foreground mb-1">Blame File Path</label>
+                    <div className="flex gap-2">
+                      <input
+                        value={blameFilePath}
+                        onChange={(event) => setBlameFilePath(event.target.value)}
+                        placeholder="src/path/to/file.ts"
+                        className="flex-1 px-3 py-2 border border-border rounded-md bg-background text-foreground text-sm"
+                      />
+                      <button
+                        onClick={() => handleBlame()}
+                        disabled={aiLoading || !blameFilePath.trim()}
+                        className={`px-3 py-2 rounded-md border transition-colors disabled:opacity-50 ${
+                          aiMode === 'blame'
+                            ? 'bg-primary text-primary-foreground border-primary'
+                            : 'border-border hover:bg-accent'
+                        }`}
+                      >
+                        Blame
+                      </button>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -833,10 +1035,21 @@ export default function HistoryView() {
                       key={index}
                       className="flex items-center justify-between p-3 bg-card rounded-md border border-border"
                     >
-                      <span className="text-sm font-mono">{file.path}</span>
-                      <div className="flex items-center gap-3 text-xs">
+                      <span className="text-sm font-mono flex-1 min-w-0 truncate pr-3">{file.path}</span>
+                      <div className="flex items-center gap-3 text-xs flex-shrink-0">
                         <span className="text-green-600">+{file.additions}</span>
                         <span className="text-red-600">-{file.deletions}</span>
+                        <button
+                          onClick={() => handleBlame(file.path)}
+                          disabled={aiLoading}
+                          className={`px-2 py-1 rounded border transition-colors disabled:opacity-50 ${
+                            aiMode === 'blame' && blameFilePath === file.path
+                              ? 'bg-primary text-primary-foreground border-primary'
+                              : 'border-border hover:bg-accent'
+                          }`}
+                        >
+                          Blame
+                        </button>
                       </div>
                     </div>
                   ))}

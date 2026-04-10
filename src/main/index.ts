@@ -5,6 +5,7 @@ import simpleGit from 'simple-git';
 import Store from 'electron-store';
 import { spawn } from 'child_process';
 import fs from 'fs';
+import { pathToFileURL } from 'url';
 
 // Resolve gitxplain CLI path for both dev and packaged layouts.
 const CLI_CANDIDATES = [
@@ -13,6 +14,7 @@ const CLI_CANDIDATES = [
   path.join(__dirname, '../../cli/index.js'),
 ];
 const GITXPLAIN_CLI = CLI_CANDIDATES.find((candidate) => fs.existsSync(candidate)) || CLI_CANDIDATES[0];
+const PIPELINE_SERVICE_MODULE = pathToFileURL(path.join(path.dirname(GITXPLAIN_CLI), 'services', 'pipelineService.js')).href;
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -411,7 +413,20 @@ ipcMain.handle('store-delete', (event, key) => {
 interface GitxplainOptions {
   repoPath: string;
   commitRef: string;
-  mode: 'summary' | 'full' | 'review' | 'security' | 'lines' | 'issues' | 'fix' | 'impact' | 'split';
+  mode:
+    | 'summary'
+    | 'full'
+    | 'review'
+    | 'security'
+    | 'lines'
+    | 'issues'
+    | 'fix'
+    | 'impact'
+    | 'split'
+    | 'refactor'
+    | 'test-suggest'
+    | 'pr-description'
+    | 'changelog';
   format?: 'plain' | 'json' | 'markdown' | 'html';
   provider?: string;
   model?: string;
@@ -603,6 +618,65 @@ function runGitxplainCommand(repoPath: string, args: string[]): Promise<{ output
   });
 }
 
+function runNodeModuleScript(repoPath: string, script: string): Promise<{ output: string; error?: string }> {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(process.execPath, ['--input-type=module', '--eval', script], {
+      cwd: repoPath,
+      env: process.env,
+      shell: false,
+      windowsHide: true,
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    proc.stdout.on('data', (data) => {
+      stdout += data.toString();
+    });
+
+    proc.stderr.on('data', (data) => {
+      stderr += data.toString();
+    });
+
+    proc.on('close', (code) => {
+      if (code === 0) {
+        resolve({ output: stdout.trim() });
+      } else {
+        resolve({ output: stdout.trim(), error: stderr.trim() || 'Command failed' });
+      }
+    });
+
+    proc.on('error', (err) => {
+      reject(new Error(`Failed to run node module script: ${err.message}`));
+    });
+  });
+}
+
+function parseUsageStatsOutput(output: string) {
+  const lines = output.split(/\r?\n/).map((line) => line.trim());
+
+  const readNumber = (prefix: string): number => {
+    const line = lines.find((item) => item.toLowerCase().startsWith(prefix.toLowerCase()));
+    if (!line) return 0;
+    const value = Number(line.split(':')[1]?.trim().replace(/,/g, ''));
+    return Number.isFinite(value) ? value : 0;
+  };
+
+  const estimatedLine = lines.find((item) => item.toLowerCase().startsWith('estimated cost:'));
+  const estimatedCostUsd = estimatedLine
+    ? Number(estimatedLine.split(':')[1]?.replace('$', '').trim()) || 0
+    : 0;
+
+  return {
+    requestCount: readNumber('Requests:'),
+    inputTokens: readNumber('Input Tokens:'),
+    outputTokens: readNumber('Output Tokens:'),
+    totalTokens: readNumber('Total Tokens:'),
+    estimatedCostUsd,
+    raw: output,
+  };
+}
+
 // Explain a commit (summary or full analysis)
 ipcMain.handle('gitxplain-explain', async (event, { repoPath, commitRef, mode = 'full' }) => {
   try {
@@ -744,5 +818,201 @@ ipcMain.handle('gitxplain-split-execute', async (event, { repoPath, commitRef })
   } catch (error: any) {
     console.error('Gitxplain split execute error:', error);
     throw new Error(`Failed to execute split: ${error.message}`);
+  }
+});
+
+ipcMain.handle('gitxplain-refactor', async (event, { repoPath, commitRef }) => {
+  try {
+    return await runGitxplain({
+      repoPath,
+      commitRef,
+      mode: 'refactor',
+      format: 'markdown',
+    });
+  } catch (error: any) {
+    console.error('Gitxplain refactor error:', error);
+    throw new Error(`Failed to suggest refactors: ${error.message}`);
+  }
+});
+
+ipcMain.handle('gitxplain-test-suggest', async (event, { repoPath, commitRef }) => {
+  try {
+    return await runGitxplain({
+      repoPath,
+      commitRef,
+      mode: 'test-suggest',
+      format: 'markdown',
+    });
+  } catch (error: any) {
+    console.error('Gitxplain test-suggest error:', error);
+    throw new Error(`Failed to suggest tests: ${error.message}`);
+  }
+});
+
+ipcMain.handle('gitxplain-pr-description', async (event, { repoPath, commitRef }) => {
+  try {
+    return await runGitxplain({
+      repoPath,
+      commitRef,
+      mode: 'pr-description',
+      format: 'markdown',
+    });
+  } catch (error: any) {
+    console.error('Gitxplain pr-description error:', error);
+    throw new Error(`Failed to draft PR description: ${error.message}`);
+  }
+});
+
+ipcMain.handle('gitxplain-changelog', async (event, { repoPath, commitRef }) => {
+  try {
+    return await runGitxplain({
+      repoPath,
+      commitRef,
+      mode: 'changelog',
+      format: 'markdown',
+    });
+  } catch (error: any) {
+    console.error('Gitxplain changelog error:', error);
+    throw new Error(`Failed to draft changelog: ${error.message}`);
+  }
+});
+
+ipcMain.handle('gitxplain-blame', async (event, { repoPath, filePath }) => {
+  try {
+    return await runGitxplainCommand(repoPath, ['--blame', filePath, '--markdown']);
+  } catch (error: any) {
+    console.error('Gitxplain blame error:', error);
+    throw new Error(`Failed to run blame analysis: ${error.message}`);
+  }
+});
+
+ipcMain.handle('gitxplain-conflict', async (event, { repoPath, diffFile }) => {
+  try {
+    const args = ['--conflict', '--markdown'];
+    if (diffFile && String(diffFile).trim()) {
+      args.push('--diff', String(diffFile).trim());
+    }
+    return await runGitxplainCommand(repoPath, args);
+  } catch (error: any) {
+    console.error('Gitxplain conflict error:', error);
+    throw new Error(`Failed to analyze merge conflict: ${error.message}`);
+  }
+});
+
+ipcMain.handle('gitxplain-stash', async (event, { repoPath, stashRef, diffFile }) => {
+  try {
+    const args = ['--stash'];
+    if (stashRef && String(stashRef).trim()) {
+      args.push(String(stashRef).trim());
+    }
+    args.push('--markdown');
+    if (diffFile && String(diffFile).trim()) {
+      args.push('--diff', String(diffFile).trim());
+    }
+    return await runGitxplainCommand(repoPath, args);
+  } catch (error: any) {
+    console.error('Gitxplain stash error:', error);
+    throw new Error(`Failed to analyze stash: ${error.message}`);
+  }
+});
+
+ipcMain.handle('gitxplain-cost', async (event, { repoPath }) => {
+  try {
+    const result = await runGitxplainCommand(repoPath, ['--cost']);
+    return {
+      ...result,
+      stats: parseUsageStatsOutput(result.output),
+    };
+  } catch (error: any) {
+    console.error('Gitxplain cost error:', error);
+    throw new Error(`Failed to load usage stats: ${error.message}`);
+  }
+});
+
+ipcMain.handle('gitxplain-pipeline-options', async (event, { repoPath }) => {
+  try {
+    const script = `
+      const mod = await import(${JSON.stringify(PIPELINE_SERVICE_MODULE)});
+      const analysis = mod.inspectRepositoryForPipeline(process.cwd());
+      process.stdout.write(JSON.stringify(analysis));
+    `;
+
+    const result = await runNodeModuleScript(repoPath, script);
+    if (result.error) {
+      return { supported: false, reason: result.error, options: [], existingWorkflows: [] };
+    }
+
+    return JSON.parse(result.output);
+  } catch (error: any) {
+    console.error('Pipeline detect error:', error);
+    throw new Error(`Failed to inspect repository for pipelines: ${error.message}`);
+  }
+});
+
+ipcMain.handle('gitxplain-pipeline-generate', async (event, { repoPath, optionId, writeFiles = false }) => {
+  try {
+    const safeOptionId = JSON.stringify(String(optionId || ''));
+    const safeWriteFiles = writeFiles ? 'true' : 'false';
+
+    const script = `
+      const mod = await import(${JSON.stringify(PIPELINE_SERVICE_MODULE)});
+      const analysis = mod.inspectRepositoryForPipeline(process.cwd());
+
+      if (!analysis.supported) {
+        throw new Error(analysis.reason || 'Pipeline generation is not supported for this repository.');
+      }
+
+      const selection = analysis.options.find((option) => option.id === ${safeOptionId});
+      if (!selection) {
+        throw new Error('Invalid pipeline option selected.');
+      }
+
+      const generatedFiles = {};
+
+      if (selection.id === 'ci' || selection.id === 'ci-release') {
+        generatedFiles['.github/workflows/ci.yml'] = mod.buildCiWorkflow(analysis.primary);
+      }
+      if (selection.id === 'ci-release') {
+        generatedFiles['.github/workflows/release.yml'] = mod.buildReleaseWorkflow(analysis.primary);
+      }
+      if (selection.id === 'container') {
+        generatedFiles['.github/workflows/container.yml'] = mod.buildContainerWorkflow();
+      }
+      if (selection.id === 'gitlab-ci') {
+        generatedFiles['.gitlab-ci.yml'] = mod.buildGitLabCiWorkflow(analysis.primary);
+      }
+      if (selection.id === 'circleci') {
+        generatedFiles['.circleci/config.yml'] = mod.buildCircleCiWorkflow(analysis.primary);
+      }
+      if (selection.id === 'bitbucket-pipelines') {
+        generatedFiles['bitbucket-pipelines.yml'] = mod.buildBitbucketPipelinesWorkflow(analysis.primary);
+      }
+
+      let writtenFiles = [];
+      let notes = [];
+
+      if (${safeWriteFiles}) {
+        const writeResult = mod.writePipelineFiles(process.cwd(), analysis, selection);
+        writtenFiles = writeResult.writtenFiles;
+        notes = writeResult.notes;
+      }
+
+      process.stdout.write(JSON.stringify({
+        selection,
+        generatedFiles,
+        writtenFiles,
+        notes,
+      }));
+    `;
+
+    const result = await runNodeModuleScript(repoPath, script);
+    if (result.error) {
+      throw new Error(result.error);
+    }
+
+    return JSON.parse(result.output);
+  } catch (error: any) {
+    console.error('Pipeline generate error:', error);
+    throw new Error(`Failed to generate pipeline: ${error.message}`);
   }
 });

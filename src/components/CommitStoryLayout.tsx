@@ -4,7 +4,7 @@
  */
 
 import React from 'react';
-import { FileText, History, BookOpen, BarChart3, Settings } from 'lucide-react';
+import { FileText, History, BookOpen, BarChart3, Settings, Sparkles } from 'lucide-react';
 import { useCommitStoryStore } from '../store/commitStoryStore';
 import ProjectSidebar from './ProjectSidebar';
 
@@ -19,6 +19,7 @@ export default function CommitStoryLayout({ children }: CommitStoryLayoutProps) 
     { id: 'changes', label: 'Changes', icon: FileText },
     { id: 'history', label: 'History', icon: History },
     { id: 'stories', label: 'Stories', icon: BookOpen },
+    { id: 'analysis', label: 'Analysis', icon: Sparkles },
     { id: 'insights', label: 'Insights', icon: BarChart3 },
     { id: 'settings', label: 'Settings', icon: Settings },
   ] as const;

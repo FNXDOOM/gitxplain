@@ -61,4 +61,24 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('gitxplain-split-preview', { repoPath, commitRef }),
   gitxplainSplitExecute: (repoPath: string, commitRef: string) =>
     ipcRenderer.invoke('gitxplain-split-execute', { repoPath, commitRef }),
+  gitxplainRefactor: (repoPath: string, commitRef: string) =>
+    ipcRenderer.invoke('gitxplain-refactor', { repoPath, commitRef }),
+  gitxplainTestSuggest: (repoPath: string, commitRef: string) =>
+    ipcRenderer.invoke('gitxplain-test-suggest', { repoPath, commitRef }),
+  gitxplainPrDescription: (repoPath: string, commitRef: string) =>
+    ipcRenderer.invoke('gitxplain-pr-description', { repoPath, commitRef }),
+  gitxplainChangelog: (repoPath: string, commitRef: string) =>
+    ipcRenderer.invoke('gitxplain-changelog', { repoPath, commitRef }),
+  gitxplainBlame: (repoPath: string, filePath: string) =>
+    ipcRenderer.invoke('gitxplain-blame', { repoPath, filePath }),
+  gitxplainConflict: (repoPath: string, diffFile?: string) =>
+    ipcRenderer.invoke('gitxplain-conflict', { repoPath, diffFile }),
+  gitxplainStash: (repoPath: string, stashRef?: string, diffFile?: string) =>
+    ipcRenderer.invoke('gitxplain-stash', { repoPath, stashRef, diffFile }),
+  gitxplainCost: (repoPath: string) =>
+    ipcRenderer.invoke('gitxplain-cost', { repoPath }),
+  gitxplainPipelineOptions: (repoPath: string) =>
+    ipcRenderer.invoke('gitxplain-pipeline-options', { repoPath }),
+  gitxplainPipelineGenerate: (repoPath: string, optionId: string, writeFiles?: boolean) =>
+    ipcRenderer.invoke('gitxplain-pipeline-generate', { repoPath, optionId, writeFiles }),
 });

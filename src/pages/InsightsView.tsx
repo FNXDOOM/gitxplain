@@ -29,6 +29,21 @@ export default function InsightsView() {
   const [showReportModal, setShowReportModal] = useState(false);
   const [reportOptions, setReportOptions] = useState<ReportOptions>(defaultOptions);
   const [generating, setGenerating] = useState(false);
+  const [costLoading, setCostLoading] = useState(false);
+  const [costError, setCostError] = useState<string>('');
+  const [costStats, setCostStats] = useState<{
+    requestCount: number;
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+    estimatedCostUsd: number;
+    raw: string;
+  } | null>(null);
+  const [pipelineLoading, setPipelineLoading] = useState(false);
+  const [pipelineError, setPipelineError] = useState<string>('');
+  const [pipelineAnalysis, setPipelineAnalysis] = useState<any>(null);
+  const [pipelineOptionId, setPipelineOptionId] = useState<string>('');
+  const [pipelineResult, setPipelineResult] = useState<any>(null);
 
   // Calculate real insights from commits
   const realInsights = useMemo(() => {
@@ -140,6 +155,59 @@ export default function InsightsView() {
     }
   };
 
+  const handleLoadCostStats = async () => {
+    if (!currentProject) return;
+    setCostLoading(true);
+    setCostError('');
+    try {
+      const result = await window.electronAPI.gitxplainCost(currentProject.path);
+      if (result.error) {
+        setCostError(result.error);
+      } else {
+        setCostStats(result.stats);
+      }
+    } catch (error: any) {
+      setCostError(error.message || 'Failed to load usage stats.');
+    } finally {
+      setCostLoading(false);
+    }
+  };
+
+  const handleDetectPipelines = async () => {
+    if (!currentProject) return;
+    setPipelineLoading(true);
+    setPipelineError('');
+    setPipelineResult(null);
+    try {
+      const analysis = await window.electronAPI.gitxplainPipelineOptions(currentProject.path);
+      setPipelineAnalysis(analysis);
+      const firstOption = analysis.options?.[0]?.id || '';
+      setPipelineOptionId(firstOption);
+    } catch (error: any) {
+      setPipelineError(error.message || 'Failed to inspect repository for pipeline options.');
+    } finally {
+      setPipelineLoading(false);
+    }
+  };
+
+  const handleGeneratePipeline = async (writeFiles: boolean) => {
+    if (!currentProject || !pipelineOptionId) return;
+    setPipelineLoading(true);
+    setPipelineError('');
+    try {
+      const result = await window.electronAPI.gitxplainPipelineGenerate(
+        currentProject.path,
+        pipelineOptionId,
+        writeFiles
+      );
+      setPipelineResult(result);
+    } catch (error: any) {
+      setPipelineError(error.message || 'Failed to generate pipeline output.');
+    } finally {
+      setPipelineLoading(false);
+    }
+  };
+
   if (!currentProject) {
     return null;
   }
@@ -209,6 +277,142 @@ export default function InsightsView() {
           value={Math.round((data.commitsPerDay?.reduce((sum, d) => sum + d.count, 0) || 0) / Math.max(data.commitsPerDay?.length || 1, 1))}
           color="orange"
         />
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-6">
+        <div className="bg-card border border-border rounded-lg p-6">
+          <div className="flex items-center justify-between gap-3 mb-4">
+            <h3 className="text-lg font-semibold">AI Cost Tracking</h3>
+            <button
+              onClick={handleLoadCostStats}
+              disabled={costLoading}
+              className="px-3 py-2 rounded-md border border-border hover:bg-accent transition-colors disabled:opacity-50"
+            >
+              {costLoading ? 'Loading...' : 'Refresh'}
+            </button>
+          </div>
+
+          {costError && (
+            <div className="mb-3 p-3 rounded-md border border-red-500/40 bg-red-500/10 text-red-700 text-sm">
+              {costError}
+            </div>
+          )}
+
+          {costStats ? (
+            <div className="grid grid-cols-2 gap-3">
+              <div className="p-3 border border-border rounded-md bg-background">
+                <p className="text-xs text-muted-foreground">Requests</p>
+                <p className="text-xl font-semibold">{costStats.requestCount}</p>
+              </div>
+              <div className="p-3 border border-border rounded-md bg-background">
+                <p className="text-xs text-muted-foreground">Total Tokens</p>
+                <p className="text-xl font-semibold">{costStats.totalTokens.toLocaleString()}</p>
+              </div>
+              <div className="p-3 border border-border rounded-md bg-background">
+                <p className="text-xs text-muted-foreground">Input Tokens</p>
+                <p className="text-xl font-semibold">{costStats.inputTokens.toLocaleString()}</p>
+              </div>
+              <div className="p-3 border border-border rounded-md bg-background">
+                <p className="text-xs text-muted-foreground">Output Tokens</p>
+                <p className="text-xl font-semibold">{costStats.outputTokens.toLocaleString()}</p>
+              </div>
+              <div className="p-3 border border-border rounded-md bg-background col-span-2">
+                <p className="text-xs text-muted-foreground">Estimated Cost (USD)</p>
+                <p className="text-2xl font-bold">${costStats.estimatedCostUsd.toFixed(6)}</p>
+              </div>
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">No usage stats loaded yet.</p>
+          )}
+        </div>
+
+        <div className="bg-card border border-border rounded-lg p-6">
+          <div className="flex items-center justify-between gap-3 mb-4">
+            <h3 className="text-lg font-semibold">Pipeline Generator</h3>
+            <button
+              onClick={handleDetectPipelines}
+              disabled={pipelineLoading}
+              className="px-3 py-2 rounded-md border border-border hover:bg-accent transition-colors disabled:opacity-50"
+            >
+              {pipelineLoading ? 'Detecting...' : 'Detect'}
+            </button>
+          </div>
+
+          {pipelineError && (
+            <div className="mb-3 p-3 rounded-md border border-red-500/40 bg-red-500/10 text-red-700 text-sm">
+              {pipelineError}
+            </div>
+          )}
+
+          {pipelineAnalysis ? (
+            <div className="space-y-3">
+              <div className="text-sm text-muted-foreground">
+                {pipelineAnalysis.supported
+                  ? `Detected ${pipelineAnalysis.primary?.type || 'project'} (${pipelineAnalysis.primary?.displayName || currentProject.name}).`
+                  : pipelineAnalysis.reason}
+              </div>
+
+              {pipelineAnalysis.supported && pipelineAnalysis.options?.length > 0 && (
+                <>
+                  <select
+                    value={pipelineOptionId}
+                    onChange={(event) => setPipelineOptionId(event.target.value)}
+                    className="w-full px-3 py-2 border border-border rounded-md bg-background text-foreground"
+                  >
+                    {pipelineAnalysis.options.map((option: any) => (
+                      <option key={option.id} value={option.id}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => handleGeneratePipeline(false)}
+                      disabled={pipelineLoading || !pipelineOptionId}
+                      className="px-3 py-2 rounded-md border border-border hover:bg-accent transition-colors disabled:opacity-50"
+                    >
+                      Preview YAML
+                    </button>
+                    <button
+                      onClick={() => handleGeneratePipeline(true)}
+                      disabled={pipelineLoading || !pipelineOptionId}
+                      className="px-3 py-2 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
+                    >
+                      Create Files
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">Detect pipeline options to start.</p>
+          )}
+
+          {pipelineResult?.generatedFiles && (
+            <div className="mt-4 space-y-3">
+              {Object.entries(pipelineResult.generatedFiles).map(([filePath, yaml]) => (
+                <div key={filePath} className="border border-border rounded-md">
+                  <div className="px-3 py-2 border-b border-border bg-muted/50 flex items-center justify-between">
+                    <span className="text-sm font-mono">{filePath}</span>
+                    <button
+                      onClick={() => navigator.clipboard.writeText(String(yaml))}
+                      className="text-xs px-2 py-1 rounded border border-border hover:bg-accent"
+                    >
+                      Copy
+                    </button>
+                  </div>
+                  <pre className="text-xs p-3 overflow-x-auto max-h-40 bg-background">{String(yaml)}</pre>
+                </div>
+              ))}
+              {pipelineResult.writtenFiles?.length > 0 && (
+                <div className="p-2 text-xs rounded border border-green-500/40 bg-green-500/10 text-green-700">
+                  Created: {pipelineResult.writtenFiles.join(', ')}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Charts Grid */}
