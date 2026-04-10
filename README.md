@@ -455,21 +455,6 @@ node ./cli/index.js HEAD~1 --full
 - `--markdown`: return Markdown output
 - `--html`: return HTML output
 
-## GitHub Companion
-
-GitHub authentication, repository browsing, issues, pull requests, commit browsing, cloning, and the interactive boot session now live in the sibling CLI project `ghxplain`.
-
-Use:
-
-```bash
-npm link
-ghxplain help
-```
-
-Run that from the `ghxplain` repository root.
-
-If no command or mode is supplied, the CLI prints help.
-
 ## Repository Log
 
 Print recent log entries from the current repository:
