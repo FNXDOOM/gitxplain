@@ -10,6 +10,9 @@ Supported providers:
 - Gemini
 - Ollama
 - Chutes AI
+- Anthropic
+- Mistral
+- Azure OpenAI
 
 ## Features
 
@@ -17,13 +20,16 @@ Supported providers:
 - Supports focused output modes like summary, issue, fix, impact, review, security, and line-by-line walkthroughs
 - Supports blame summaries, changelog drafting, PR description drafting, refactor suggestions, and test suggestion modes
 - Supports stash explanation and single-file diff deep dives
+- Supports merge conflict analysis with suggested resolutions
+- Supports cumulative token usage tracking and optional estimated cost reporting
+- Supports interactive split-plan review before history is rewritten
 - Supports AI-assisted commit splitting plans, with optional execution for the latest commit
 - Supports release-branch merge previews driven by detected version bumps in diffs
 - Supports automatic release tagging driven by the same version-bump detection used for release merges
 - Supports release health status checks that show missing tags, unmerged version bumps, branch drift, and next steps
 - Supports AI-assisted commit planning for uncommitted working tree changes
 - Supports quick repository log output for full history inspection
-- Supports repository-aware CI/CD workflow generation for the repo you are currently in
+- Supports repository-aware CI/CD workflow generation for GitHub Actions, GitLab CI, CircleCI, and Bitbucket Pipelines
 - Supports single commits, commit ranges, and branch-vs-base comparisons
 - Truncates oversized diffs before sending them to the model and reports that truncation
 - Streams output for supported providers
@@ -77,6 +83,12 @@ Inspect cache usage or clear cached responses.
 ```bash
 gitxplain cache stats
 gitxplain cache clear
+```
+
+Show cumulative token usage and estimated cost totals.
+
+```bash
+gitxplain --cost
 ```
 
 Save the default AI provider.
@@ -176,6 +188,21 @@ Detect and generate CI/CD workflow files.
 gitxplain --pipeline
 ```
 
+Analyze unresolved merge conflicts in the working tree.
+
+```bash
+gitxplain --conflict
+gitxplain --conflict --diff src/auth.js
+```
+
+Install a git hook for commit, merge, or push workflows.
+
+```bash
+gitxplain install-hook
+gitxplain install-hook post-merge
+gitxplain install-hook pre-push
+```
+
 Analysis:
 
 Generate a one-line summary.
@@ -256,6 +283,12 @@ Analyze file ownership with git blame.
 --blame <file>
 ```
 
+Suggest resolutions for unresolved merge conflicts.
+
+```bash
+--conflict
+```
+
 Focus analysis on one changed file.
 
 ```bash
@@ -284,6 +317,12 @@ Preview a plan without applying it.
 
 ```bash
 --dry-run
+```
+
+Review or edit a split plan before execution.
+
+```bash
+--interactive
 ```
 
 Release:
@@ -456,6 +495,12 @@ Bypass cached responses for one command.
 --no-cache
 ```
 
+Show cumulative token usage and estimated cost totals.
+
+```bash
+--cost
+```
+
 Limit diff size before sending it to the model.
 
 ```bash
@@ -486,8 +531,12 @@ gitxplain HEAD~10..HEAD --changelog
 gitxplain HEAD --refactor
 gitxplain HEAD --test-suggest
 gitxplain --blame cli/index.js
+gitxplain --conflict
 gitxplain --stash
 gitxplain HEAD~5..HEAD --lines --diff cli/index.js
+gitxplain --cost
+gitxplain HEAD --split --interactive --execute
+gitxplain install-hook post-merge
 ```
 
 If you do not want to link it globally, you can still run it locally:
@@ -511,16 +560,19 @@ node ./cli/index.js HEAD~1 --full
 - `--pr-description`: draft a ready-to-paste pull request description
 - `--changelog`: generate changelog-style release notes from the change set
 - `--blame <file>`: summarize ownership and change history for one file using `git blame`
+- `--conflict`: inspect unresolved merge conflicts and suggest likely resolutions
 - `--stash [ref]`: explain what is stored in a stash entry, defaulting to `stash@{0}`
 - `--diff <file>`: focus commit or range analysis on a single file
 - `--split`: propose how to split a commit into multiple atomic commits
+- `--interactive`: review or edit a split plan before executing it
+- `--cost`: show cumulative token usage and estimated cost totals
 - `--merge`: preview or execute a merge into the `release` branch based on detected version bumps
 - `--tag`: preview or create release tags from the same detected version windows
 - `--release [status]`: inspect release branch health, missing tags, source-vs-release drift, and the next recommended action
 - `--commit`: propose commits for current uncommitted changes
 - `--log`: print Git log entries for the current repository
 - `--status`: print Git working tree status for the current repository
-- `--pipeline`: inspect the current repository and generate GitHub Actions CI/CD workflows
+- `--pipeline`: inspect the current repository and generate GitHub Actions, GitLab CI, CircleCI, or Bitbucket Pipelines config
 - `--execute`: apply a proposed split by rewriting history
 - `--dry-run`: preview the split or commit plan without applying it
 - `--json`: return structured JSON instead of formatted text
@@ -545,6 +597,7 @@ Run a few common Git actions directly through `gitxplain`:
 gitxplain --status
 gitxplain cache stats
 gitxplain cache clear
+gitxplain --cost
 gitxplain add README.md
 gitxplain remove README.md
 gitxplain remove hard
@@ -612,13 +665,19 @@ Actually split the current `HEAD` commit into smaller commits:
 gitxplain HEAD --split --execute
 ```
 
+Review the plan interactively before executing it:
+
+```bash
+gitxplain HEAD --split --interactive --execute
+```
+
 Use a specific provider for the analysis:
 
 ```bash
 gitxplain HEAD --split --provider gemini
 ```
 
-`--split` asks the model for a plan first. By default this is a dry run and only prints the proposed commit breakdown. Adding `--execute` rewrites Git history by undoing the current `HEAD` commit and recreating it as multiple commits in the suggested order.
+`--split` asks the model for a plan first. By default this is a dry run and only prints the proposed commit breakdown. Adding `--execute` rewrites Git history by undoing the current `HEAD` commit and recreating it as multiple commits in the suggested order. Adding `--interactive` lets you keep, edit, skip, or abort individual split groups before the rewrite happens.
 
 Warning: `--split --execute` rewrites history. If the commit was already pushed, you may need to force-push after reviewing the new commit stack. For safety, execution only supports splitting the current `HEAD` commit and requires a clean working tree.
 
@@ -705,7 +764,7 @@ gitxplain config set model gpt-4.1-mini
 gitxplain config list
 ```
 
-## Clipboard, Streaming, And Hooks
+## Clipboard, Streaming, Cost, And Hooks
 
 Copy the final output to your clipboard:
 
@@ -719,10 +778,28 @@ Stream long responses as they arrive:
 gitxplain HEAD~1 --full --stream
 ```
 
+Show cumulative usage and estimated cost totals:
+
+```bash
+gitxplain --cost
+```
+
 Install a post-commit hook that saves a Markdown explanation under `.git/gitxplain/last-explanation.md`:
 
 ```bash
 gitxplain install-hook
+```
+
+Install a post-merge hook that explains the new `HEAD` after merges:
+
+```bash
+gitxplain install-hook post-merge
+```
+
+Install a pre-push hook that runs a security-oriented review:
+
+```bash
+gitxplain install-hook pre-push
 ```
 
 ## Provider Setup
@@ -745,6 +822,41 @@ You can switch providers later:
 ```bash
 gitxplain config set provider groq
 gitxplain config set api-key your_key
+```
+
+Additional supported providers:
+
+```bash
+gitxplain config set provider anthropic
+gitxplain config set api-key your_key
+
+gitxplain config set provider mistral
+gitxplain config set api-key your_key
+
+gitxplain config set provider azure-openai
+gitxplain config set api-key your_key
+```
+
+Azure OpenAI also requires endpoint configuration:
+
+```bash
+export AZURE_OPENAI_BASE_URL="https://your-resource.openai.azure.com"
+export AZURE_OPENAI_DEPLOYMENT="your-deployment-name"
+export AZURE_OPENAI_API_VERSION="2024-10-21"
+```
+
+Optional token pricing env vars for estimated cost tracking:
+
+```bash
+export OPENAI_INPUT_COST_PER_MTOK="0.15"
+export OPENAI_OUTPUT_COST_PER_MTOK="0.60"
+```
+
+Or use generic pricing defaults across providers:
+
+```bash
+export LLM_INPUT_COST_PER_MTOK="0.15"
+export LLM_OUTPUT_COST_PER_MTOK="0.60"
 ```
 
 If you want to inspect what is saved:

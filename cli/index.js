@@ -23,6 +23,7 @@ import {
   fetchBlameData,
   fetchCommitData,
   fetchCommitDataForFile,
+  fetchConflictData,
   fetchStashData,
   fetchWorkingTreeData,
   gitAddFiles,
@@ -90,6 +91,7 @@ const MODE_FLAGS = new Map([
   ["--pr-description", "pr-description"],
   ["--changelog", "changelog"],
   ["--blame", "blame"],
+  ["--conflict", "conflict"],
   ["--stash", "stash"],
   ["--split", "split"],
   ["--merge", "merge"],
@@ -121,6 +123,7 @@ const ANALYSIS_MODES = new Set([
   "pr-description",
   "changelog",
   "blame",
+  "conflict",
   "stash",
   "split"
 ]);
@@ -151,6 +154,7 @@ Usage:
   gitxplain cache clear
   gitxplain cache stats
   gitxplain --cost
+  gitxplain install-hook [post-commit|post-merge|pre-push]
   gitxplain config set provider <name>
   gitxplain config set api-key <value> [--provider <name>]
   gitxplain config get [key]
@@ -163,6 +167,7 @@ Usage:
   gitxplain --release [status]
   gitxplain --merge
   gitxplain --tag
+  gitxplain --conflict
   gitxplain --stash [stash-ref]
   gitxplain --log
   gitxplain --status
@@ -182,6 +187,7 @@ Analysis:
   --pr-description Generate a ready-to-paste PR description
   --changelog     Generate changelog-style release notes
   --blame <file>  Analyze ownership and history for one file with git blame
+  --conflict      Suggest resolutions for unresolved merge conflicts in the working tree
   --stash [ref]   Explain a stash entry, defaulting to stash@{0}
   --split         Propose splitting a commit into smaller atomic commits
   --cost          Show cumulative token usage and estimated cost totals
@@ -198,7 +204,7 @@ Release:
 Repo:
   --log           Print Git log entries for the current repository
   --status        Print Git working tree status for the current repository
-  --pipeline      Detect the current repository stack and create CI/CD workflow files
+  --pipeline      Detect the current repository stack and create GitHub/GitLab/CircleCI/Bitbucket CI files
 
 Quick Actions:
   config          Persist provider, model, and API key settings
@@ -210,7 +216,7 @@ Quick Actions:
   pop             Pop a stash entry like "pop 2"
   pull            Run git pull, optionally with a remote and branch
   push            Run git push, optionally with a remote and branch
-  install-hook    Install the gitxplain hook
+  install-hook    Install a post-commit, post-merge, or pre-push gitxplain hook
   cache           Manage gitxplain cache entries
   git             Pass through to native git commands
 
@@ -989,6 +995,70 @@ export async function main(argv = process.argv) {
     const renderedOutput = renderFinalOutput({
       runtimeOptions,
       mode: "blame",
+      commitData,
+      explanation,
+      responseMeta,
+      promptMeta
+    });
+
+    if (canStream) {
+      process.stdout.write("\n");
+      if (runtimeOptions.verbose) {
+        process.stdout.write(formatFooter({ responseMeta, promptMeta, options: runtimeOptions }));
+      }
+    } else {
+      console.log(renderedOutput);
+    }
+
+    if (runtimeOptions.clipboard) {
+      copyToClipboard(renderedOutput);
+      if (!runtimeOptions.quiet) {
+        console.error("Copied output to clipboard.");
+      }
+    }
+
+    return 0;
+  }
+
+  if (parsed.mode === "conflict") {
+    const commitData = fetchConflictData(cwd, parsed.diffFile);
+    const canStream = runtimeOptions.stream && runtimeOptions.format === "plain";
+    let streamStarted = false;
+
+    if (runtimeOptions.stream && !canStream && !runtimeOptions.quiet) {
+      console.error(`Streaming is only supported with plain output. Ignoring --stream for ${runtimeOptions.format} format.`);
+    }
+
+    const { explanation, responseMeta, promptMeta } = await generateExplanation({
+      mode: "conflict",
+      commitData,
+      providerOverride: runtimeOptions.provider,
+      modelOverride: runtimeOptions.model,
+      maxDiffLines: runtimeOptions.maxDiffLines,
+      noCache: runtimeOptions.noCache,
+      stream: canStream,
+      onStart: canStream
+        ? ({ promptMeta: streamPromptMeta }) => {
+            if (!runtimeOptions.quiet && !streamStarted) {
+              process.stdout.write(
+                formatPreamble({
+                  mode: "conflict",
+                  commitData,
+                  responseMeta: null,
+                  promptMeta: streamPromptMeta,
+                  options: runtimeOptions
+                })
+              );
+              streamStarted = true;
+            }
+          }
+        : null,
+      onChunk: canStream ? (chunk) => process.stdout.write(chunk) : null
+    });
+
+    const renderedOutput = renderFinalOutput({
+      runtimeOptions,
+      mode: "conflict",
       commitData,
       explanation,
       responseMeta,
