@@ -21,14 +21,16 @@ const commitData = {
 };
 
 test("formatOutput includes header and explanation", { concurrency: false }, () => {
-  const formatted = formatOutput({
-    mode: "full",
-    commitData,
-    explanation: "Summary:\nFix login crash",
-    responseMeta: null,
-    promptMeta: { warnings: [] },
-    options: { quiet: false, verbose: false }
-  });
+  const formatted = stripAnsi(
+    formatOutput({
+      mode: "full",
+      commitData,
+      explanation: "Summary:\nFix login crash",
+      responseMeta: null,
+      promptMeta: { warnings: [] },
+      options: { quiet: false, verbose: false }
+    })
+  );
 
   assert.match(formatted, /Commit: abc123|Range: abc123/);
   assert.match(formatted, /Fix login crash/);
