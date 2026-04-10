@@ -79,6 +79,14 @@ test("parseArgs handles config set commands", () => {
   assert.equal(parsed.commitRef, null);
 });
 
+test("parseArgs handles cache clear commands", () => {
+  const parsed = parseArgs(["node", "gitxplain", "cache", "clear"]);
+
+  assert.equal(parsed.cacheCommand, true);
+  assert.equal(parsed.cacheAction, "clear");
+  assert.equal(parsed.commitRef, null);
+});
+
 test("parseArgs handles empty invocation", () => {
   const parsed = parseArgs(["node", "gitxplain"]);
 
@@ -94,6 +102,13 @@ test("parseArgs handles split execution flags", () => {
   assert.equal(parsed.mode, "split");
   assert.equal(parsed.execute, true);
   assert.equal(parsed.dryRun, true);
+});
+
+test("parseArgs handles no-cache flag", () => {
+  const parsed = parseArgs(["node", "gitxplain", "HEAD", "--summary", "--no-cache"]);
+
+  assert.equal(parsed.commitRef, "HEAD");
+  assert.equal(parsed.noCache, true);
 });
 
 test("parseArgs handles merge flag execution", () => {

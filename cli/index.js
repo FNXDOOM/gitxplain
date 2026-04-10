@@ -5,6 +5,7 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { readFileSync, realpathSync } from "node:fs";
 import { generateExplanation } from "./services/aiService.js";
+import { clearCache } from "./services/cacheService.js";
 import { loadEnvFile } from "./services/envLoader.js";
 import { copyToClipboard } from "./services/clipboardService.js";
 import {
@@ -110,6 +111,7 @@ const ANALYSIS_MODES = new Set([
 
 const RESERVED_SUBCOMMANDS = new Set([
   "help",
+  "cache",
   "config",
   "install-hook",
   "git",
@@ -130,6 +132,7 @@ function printHelp() {
 Usage:
   gitxplain --help
   gitxplain --version
+  gitxplain cache clear
   gitxplain config set provider <name>
   gitxplain config set api-key <value> [--provider <name>]
   gitxplain config get [key]
@@ -181,6 +184,7 @@ Quick Actions:
   pull            Run git pull, optionally with a remote and branch
   push            Run git push, optionally with a remote and branch
   install-hook    Install the gitxplain hook
+  cache           Manage gitxplain cache entries
   git             Pass through to native git commands
 
 Output:
@@ -193,6 +197,7 @@ Output:
   --verbose
   --clipboard
   --stream
+  --no-cache
   --max-diff-lines <n>
 
 Comparison:
@@ -337,6 +342,20 @@ function handleConfigCommand(parsed) {
   throw new Error(`Unknown config subcommand: ${parsed.configAction}`);
 }
 
+function handleCacheCommand(parsed) {
+  if (parsed.cacheAction == null) {
+    throw new Error('Usage: gitxplain cache clear');
+  }
+
+  if (parsed.cacheAction === "clear") {
+    const deletedCount = clearCache();
+    console.log(`Cleared ${deletedCount} cache entr${deletedCount === 1 ? "y" : "ies"}.`);
+    return 0;
+  }
+
+  throw new Error(`Unknown cache subcommand: ${parsed.cacheAction}`);
+}
+
 function isDirectNativeGitSubcommand(subcommand, knownGitSubcommands) {
   if (!subcommand || subcommand.startsWith("-")) {
     return false;
@@ -381,6 +400,7 @@ export function parseArgs(argv, options = {}) {
   const explicitFormat = [...FORMAT_FLAGS.entries()].find(([flag]) => flags.has(flag))?.[1] ?? null;
   const isInstallHook = subcommand === "install-hook";
   const isConfigCommand = subcommand === "config";
+  const isCacheCommand = subcommand === "cache";
   const isNativeGitWrapper = subcommand === "git";
   const isReleaseCommand = flags.has("--release");
   const isAddCommand = subcommand === "add";
@@ -401,9 +421,11 @@ export function parseArgs(argv, options = {}) {
     nativeGitCommand: isNativeGitCommand,
     installHook: isInstallHook,
     configCommand: isConfigCommand,
+    cacheCommand: isCacheCommand,
     configAction: isConfigCommand ? positional[1] ?? null : null,
     configKey: isConfigCommand ? positional[2] ?? null : null,
     configValue: isConfigCommand ? positional.slice(3).join(" ") || null : null,
+    cacheAction: isCacheCommand ? positional[1] ?? null : null,
     releaseCommand: isReleaseCommand,
     releaseAction: isReleaseCommand ? positional[0] ?? "status" : null,
     addCommand: isAddCommand,
@@ -427,6 +449,7 @@ export function parseArgs(argv, options = {}) {
     commitRef:
       isInstallHook ||
       isConfigCommand ||
+      isCacheCommand ||
       isNativeGitCommand ||
       isReleaseCommand ||
       isAddCommand ||
@@ -451,6 +474,7 @@ export function parseArgs(argv, options = {}) {
     prBase: getFlagValue(args, "--pr"),
     clipboard: flags.has("--clipboard"),
     stream: flags.has("--stream"),
+    noCache: flags.has("--no-cache"),
     verbose: flags.has("--verbose"),
     quiet: flags.has("--quiet"),
     execute: flags.has("--execute"),
@@ -488,6 +512,7 @@ function resolveRuntimeOptions(parsed, config) {
     maxDiffLines: parsed.maxDiffLines ?? config.maxDiffLines ?? 800,
     clipboard: parsed.clipboard || config.clipboard === true,
     stream: parsed.stream || config.stream === true,
+    noCache: parsed.noCache,
     verbose: parsed.verbose || config.verbose === true,
     quiet: parsed.quiet || config.quiet === true
   };
@@ -580,6 +605,10 @@ export async function main(argv = process.argv) {
 
   if (parsed.configCommand) {
     return handleConfigCommand(parsed);
+  }
+
+  if (parsed.cacheCommand) {
+    return handleCacheCommand(parsed);
   }
 
   if (parsed.nativeGitCommand) {
@@ -700,6 +729,7 @@ export async function main(argv = process.argv) {
       providerOverride: runtimeOptions.provider,
       modelOverride: runtimeOptions.model,
       maxDiffLines: runtimeOptions.maxDiffLines,
+      noCache: runtimeOptions.noCache,
       stream: false,
       onChunk: null,
       onStart: null
@@ -820,6 +850,7 @@ export async function main(argv = process.argv) {
       providerOverride: runtimeOptions.provider,
       modelOverride: runtimeOptions.model,
       maxDiffLines: runtimeOptions.maxDiffLines,
+      noCache: runtimeOptions.noCache,
       stream: false,
       onChunk: null,
       onStart: null
@@ -860,12 +891,17 @@ export async function main(argv = process.argv) {
   const canStream = runtimeOptions.stream && runtimeOptions.format === "plain";
   let streamStarted = false;
 
+  if (runtimeOptions.stream && !canStream && !runtimeOptions.quiet) {
+    console.error(`Streaming is only supported with plain output. Ignoring --stream for ${runtimeOptions.format} format.`);
+  }
+
   const { explanation, responseMeta, promptMeta } = await generateExplanation({
     mode,
     commitData,
     providerOverride: runtimeOptions.provider,
     modelOverride: runtimeOptions.model,
     maxDiffLines: runtimeOptions.maxDiffLines,
+    noCache: runtimeOptions.noCache,
     stream: canStream,
     onStart: canStream
       ? ({ promptMeta: streamPromptMeta }) => {
